@@ -667,7 +667,7 @@ func (s *sqliteAdapter) GetTables(db *sql.DB, dbName string) ([]string, error) {
 }
 
 func (s *sqliteAdapter) GetTableColumns(db *sql.DB, dbName, tableName string) ([]string, error) {
-	query := fmt.Sprintf("PRAGMA table_info(%s)", tableName)
+	query := fmt.Sprintf("PRAGMA table_info('%s')", strings.ReplaceAll(tableName, "'", "''"))
 	rows, err := db.Query(query)
 	if err != nil {
 		return nil, err
@@ -714,7 +714,7 @@ func (s *sqliteAdapter) GetCurrentDatabase(db *sql.DB) (string, error) {
 }
 
 func (s *sqliteAdapter) GetTableSchema(db *sql.DB, dbName, tableName string) ([]ColumnInfo, error) {
-	query := fmt.Sprintf("PRAGMA table_info(%s)", tableName)
+	query := fmt.Sprintf("PRAGMA table_info('%s')", strings.ReplaceAll(tableName, "'", "''"))
 	rows, err := db.Query(query)
 	if err != nil {
 		return nil, err
@@ -742,24 +742,46 @@ func (s *sqliteAdapter) GetTableSchema(db *sql.DB, dbName, tableName string) ([]
 }
 
 func (s *sqliteAdapter) GetTableIndexes(db *sql.DB, dbName, tableName string) ([]IndexInfo, error) {
-	query := fmt.Sprintf("PRAGMA index_list(%s)", tableName)
+	query := fmt.Sprintf("PRAGMA index_list('%s')", strings.ReplaceAll(tableName, "'", "''"))
 	rows, err := db.Query(query)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = rows.Close() }()
 
-	var indexes []IndexInfo
+	// First, collect all index info
+	type indexMetadata struct {
+		name    string
+		unique  string
+		origin  string
+		partial string
+	}
+	var indexMetas []indexMetadata
 	for rows.Next() {
 		var seq int
 		var name, unique, origin, partial string
 
 		if err := rows.Scan(&seq, &name, &unique, &origin, &partial); err != nil {
+			_ = rows.Close()
 			return nil, err
 		}
+		indexMetas = append(indexMetas, indexMetadata{
+			name:    name,
+			unique:  unique,
+			origin:  origin,
+			partial: partial,
+		})
+	}
+	_ = rows.Close()
 
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Now query column info for each index
+	var indexes []IndexInfo
+	for _, meta := range indexMetas {
 		// Get columns for this index
-		colQuery := fmt.Sprintf("PRAGMA index_info(%s)", name)
+		colQuery := fmt.Sprintf("PRAGMA index_info('%s')", strings.ReplaceAll(meta.name, "'", "''"))
 		colRows, err := db.Query(colQuery)
 		if err != nil {
 			continue
@@ -767,28 +789,31 @@ func (s *sqliteAdapter) GetTableIndexes(db *sql.DB, dbName, tableName string) ([
 
 		var cols []string
 		for colRows.Next() {
-			var seqno, cid int
-			var colName string
+			var seqno int
+			var cid sql.NullInt64
+			var colName sql.NullString
 			if err := colRows.Scan(&seqno, &cid, &colName); err != nil {
 				continue
 			}
-			cols = append(cols, colName)
+			if colName.Valid {
+				cols = append(cols, colName.String)
+			}
 		}
 		_ = colRows.Close()
 
 		idxType := "INDEX"
-		if origin == "pk" {
+		if meta.origin == "pk" {
 			idxType = "PRIMARY KEY"
 		}
 
 		indexes = append(indexes, IndexInfo{
-			Name:    name,
+			Name:    meta.name,
 			Type:    idxType,
 			Columns: cols,
-			Unique:  unique != "0",
+			Unique:  meta.unique != "0",
 		})
 	}
-	return indexes, rows.Err()
+	return indexes, nil
 }
 
 func (s *sqliteAdapter) GetTableDDL(db *sql.DB, dbName, tableName string) (string, error) {
@@ -849,4 +874,43 @@ func getAdapter(dbType string) dbAdapter {
 	default:
 		return &postgresAdapter{} // default to postgres
 	}
+}
+
+// TestAdapter provides access to database adapter methods for testing purposes.
+// This allows external test packages to test adapter functionality.
+type TestAdapter struct {
+	adapter dbAdapter
+}
+
+// NewTestAdapter creates a TestAdapter for the given database type.
+// Supported types: "sqlite", "postgres", "mysql"
+func NewTestAdapter(dbType string) *TestAdapter {
+	return &TestAdapter{
+		adapter: getAdapter(dbType),
+	}
+}
+
+// GetDatabases returns list of databases
+func (ta *TestAdapter) GetDatabases(db *sql.DB) ([]string, error) {
+	return ta.adapter.GetDatabases(db)
+}
+
+// GetTables returns list of tables in a database
+func (ta *TestAdapter) GetTables(db *sql.DB, dbName string) ([]string, error) {
+	return ta.adapter.GetTables(db, dbName)
+}
+
+// GetTableColumns returns list of column names for a table
+func (ta *TestAdapter) GetTableColumns(db *sql.DB, dbName, tableName string) ([]string, error) {
+	return ta.adapter.GetTableColumns(db, dbName, tableName)
+}
+
+// GetTableSchema returns detailed schema information for a table
+func (ta *TestAdapter) GetTableSchema(db *sql.DB, dbName, tableName string) ([]ColumnInfo, error) {
+	return ta.adapter.GetTableSchema(db, dbName, tableName)
+}
+
+// GetTableIndexes returns index information for a table
+func (ta *TestAdapter) GetTableIndexes(db *sql.DB, dbName, tableName string) ([]IndexInfo, error) {
+	return ta.adapter.GetTableIndexes(db, dbName, tableName)
 }
