@@ -264,7 +264,18 @@ func (dv *DBViewer) handleDatabases(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Use adapter to get databases/schemas
+	// In single database mode (dsnPrefix is empty), only return current database
+	if dv.dsnPrefix == "" {
+		dbName, err := dv.adapter.GetCurrentDatabase(dv.db)
+		if err != nil {
+			respondError(w, fmt.Sprintf("Failed to get current database: %v", err), http.StatusInternalServerError)
+			return
+		}
+		respondJSON(w, []string{dbName})
+		return
+	}
+
+	// In multi-database mode, return all databases
 	databases, err := dv.adapter.GetDatabases(dv.db)
 	if err != nil {
 		respondError(w, fmt.Sprintf("Failed to query databases: %v", err), http.StatusInternalServerError)
