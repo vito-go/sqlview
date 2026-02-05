@@ -909,28 +909,37 @@
         }
 
         .query-history-toggle {
-            position: fixed;
-            right: 16px;
-            bottom: 16px;
-            width: 56px;
-            height: 56px;
-            border-radius: 50%;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
+            padding: 8px 16px;
+            border-radius: 6px;
+            background: #f0f0f0;
+            color: #333;
             border: none;
-            font-size: 24px;
+            font-size: 14px;
+            font-weight: 500;
             cursor: pointer;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            transition: all 0.2s;
             display: flex;
             align-items: center;
-            justify-content: center;
-            transition: all 0.2s;
-            z-index: 999;
+            gap: 6px;
         }
 
         .query-history-toggle:hover {
-            transform: scale(1.1);
-            box-shadow: 0 6px 16px rgba(0,0,0,0.2);
+            background: #e0e0e0;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+        }
+
+        .query-history-toggle:active {
+            transform: translateY(0);
+        }
+
+        body.dark-mode .query-history-toggle {
+            background: #3a3a3a;
+            color: #e0e0e0;
+        }
+
+        body.dark-mode .query-history-toggle:hover {
+            background: #454545;
         }
 
         .query-history-empty {
@@ -1299,6 +1308,9 @@
                 <div class="query-header">
                     <h3>SQL Query</h3>
                     <div class="query-actions">
+                        <button class="query-history-toggle" onclick="toggleQueryHistory()" title="Query History">
+                            📜 History
+                        </button>
                         <button class="btn-secondary" onclick="clearQuery()">Clear</button>
                         <button class="btn-primary" onclick="executeQuery()" id="executeBtn">
                             <span>Execute</span>
@@ -1483,11 +1495,6 @@
             <button class="query-history-clear" onclick="clearQueryHistory()">🗑️ Clear All</button>
         </div>
     </div>
-
-    <!-- Query History Toggle Button -->
-    <button class="query-history-toggle" onclick="toggleQueryHistory()" title="Query History">
-        📜
-    </button>
 
     <script>
         // Get base path from current location
