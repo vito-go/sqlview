@@ -2002,22 +2002,9 @@
             <span>View Data</span>
         </div>
         <div class="context-menu-separator"></div>
-        <div class="context-menu-item" data-action="viewSchema">
-            <span class="icon">📐</span>
-            <span>View Schema</span>
-        </div>
-        <div class="context-menu-item" data-action="viewIndexes">
-            <span class="icon">🔑</span>
-            <span>View Indexes</span>
-        </div>
-        <div class="context-menu-item" data-action="viewDDL">
-            <span class="icon">📝</span>
-            <span>View DDL</span>
-        </div>
-        <div class="context-menu-separator"></div>
-        <div class="context-menu-item" data-action="viewStats">
-            <span class="icon">📈</span>
-            <span>View Statistics</span>
+        <div class="context-menu-item" data-action="openInSchemaExplorer">
+            <span class="icon">🔍</span>
+            <span>Open in Schema Explorer</span>
         </div>
         <div class="context-menu-separator"></div>
         <div class="context-menu-item" data-action="copyTableName">
@@ -2523,23 +2510,12 @@
 
         // Handle context menu actions
         async function handleContextMenuAction(action, tableName) {
-            const database = document.getElementById('databaseSelect').value;
-
             switch (action) {
                 case 'viewData':
                     loadTableData(tableName);
                     break;
-                case 'viewSchema':
-                    await viewTableSchema(database, tableName);
-                    break;
-                case 'viewIndexes':
-                    await viewTableIndexes(database, tableName);
-                    break;
-                case 'viewDDL':
-                    await viewTableDDL(database, tableName);
-                    break;
-                case 'viewStats':
-                    await viewTableStats(database, tableName);
+                case 'openInSchemaExplorer':
+                    openTableInSchemaExplorer(tableName);
                     break;
                 case 'copyTableName':
                     copyTableName(tableName);
@@ -2547,119 +2523,12 @@
             }
         }
 
-        // View table schema
-        async function viewTableSchema(database, tableName) {
-            try {
-                showModal(`${tableName} - Schema`, 'Loading...');
-                const response = await fetch(`${apiBase}/table-schema?database=${database}&table=${tableName}`);
-                const data = await response.json();
-
-                if (data.error) {
-                    throw new Error(data.error);
-                }
-
-                let html = '<table class="info-table"><thead><tr>';
-                html += '<th>Column</th><th>Type</th><th>Nullable</th><th>Default</th>';
-                html += '</tr></thead><tbody>';
-
-                data.columns.forEach(col => {
-                    html += '<tr>';
-                    html += `<td><strong>${escapeHtml(col.name)}</strong></td>`;
-                    html += `<td>${escapeHtml(col.type)}</td>`;
-                    html += `<td>${col.nullable ? 'YES' : 'NO'}</td>`;
-                    html += `<td>${col.default ? escapeHtml(col.default) : '-'}</td>`;
-                    html += '</tr>';
-                });
-
-                html += '</tbody></table>';
-                showModal(`${tableName} - Schema`, html);
-            } catch (error) {
-                showModal(`${tableName} - Schema`, `<div class="error-message">Failed to load schema: ${error.message}</div>`);
-            }
-        }
-
-        // View table indexes
-        async function viewTableIndexes(database, tableName) {
-            try {
-                showModal(`${tableName} - Indexes`, 'Loading...');
-                const response = await fetch(`${apiBase}/table-indexes?database=${database}&table=${tableName}`);
-                const data = await response.json();
-
-                if (data.error) {
-                    throw new Error(data.error);
-                }
-
-                if (!data.indexes || data.indexes.length === 0) {
-                    showModal(`${tableName} - Indexes`, '<div style="text-align: center; color: #999; padding: 40px;">No indexes found</div>');
-                    return;
-                }
-
-                let html = '';
-                data.indexes.forEach(idx => {
-                    html += '<div class="index-item">';
-                    const icon = idx.type === 'PRIMARY KEY' ? '🔑' : '📇';
-                    html += `<div class="index-name">${icon} ${escapeHtml(idx.name)}</div>`;
-                    html += '<div class="index-details">';
-                    html += `Type: ${escapeHtml(idx.type)}<br>`;
-                    html += `Columns: ${escapeHtml(idx.columns.join(', '))}<br>`;
-                    if (idx.unique !== undefined) {
-                        html += `Unique: ${idx.unique ? 'Yes' : 'No'}`;
-                    }
-                    html += '</div></div>';
-                });
-
-                showModal(`${tableName} - Indexes`, html);
-            } catch (error) {
-                showModal(`${tableName} - Indexes`, `<div class="error-message">Failed to load indexes: ${error.message}</div>`);
-            }
-        }
-
-        // View table DDL
-        async function viewTableDDL(database, tableName) {
-            try {
-                showModal(`${tableName} - DDL`, 'Loading...');
-                const response = await fetch(`${apiBase}/table-ddl?database=${database}&table=${tableName}`);
-                const data = await response.json();
-
-                if (data.error) {
-                    throw new Error(data.error);
-                }
-
-                const html = `<div class="ddl-code">${escapeHtml(data.ddl)}</div>`;
-                showModal(`${tableName} - DDL`, html);
-            } catch (error) {
-                showModal(`${tableName} - DDL`, `<div class="error-message">Failed to load DDL: ${error.message}</div>`);
-            }
-        }
-
-        // View table statistics
-        async function viewTableStats(database, tableName) {
-            try {
-                showModal(`${tableName} - Statistics`, 'Loading...');
-                const response = await fetch(`${apiBase}/table-stats?database=${database}&table=${tableName}`);
-                const data = await response.json();
-
-                if (data.error) {
-                    throw new Error(data.error);
-                }
-
-                let html = '<div class="stats-grid">';
-                html += `<div class="stats-card"><div class="stats-label">Row Count</div><div class="stats-value">${formatNumber(data.row_count)}</div></div>`;
-                if (data.table_size) {
-                    html += `<div class="stats-card"><div class="stats-label">Table Size</div><div class="stats-value">${data.table_size}</div></div>`;
-                }
-                if (data.index_size) {
-                    html += `<div class="stats-card"><div class="stats-label">Index Size</div><div class="stats-value">${data.index_size}</div></div>`;
-                }
-                if (data.total_size) {
-                    html += `<div class="stats-card"><div class="stats-label">Total Size</div><div class="stats-value">${data.total_size}</div></div>`;
-                }
-                html += '</div>';
-
-                showModal(`${tableName} - Statistics`, html);
-            } catch (error) {
-                showModal(`${tableName} - Statistics`, `<div class="error-message">Failed to load statistics: ${error.message}</div>`);
-            }
+        // Open table in Schema Explorer
+        function openTableInSchemaExplorer(tableName) {
+            // Switch to Schema Explorer tab
+            switchTab('schema');
+            // Select the table in Schema Explorer
+            selectSchemaTable(tableName);
         }
 
         // Copy table name to clipboard
