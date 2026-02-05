@@ -1266,6 +1266,49 @@
             display: flex;
             flex-direction: column;
             overflow: hidden;
+            transition: width 0.3s ease, margin-left 0.3s ease;
+            position: relative;
+        }
+
+        .schema-sidebar.collapsed {
+            width: 0;
+            margin-left: -300px;
+            border-right: none;
+        }
+
+        .schema-toggle-btn {
+            position: absolute;
+            right: -40px;
+            top: 16px;
+            width: 32px;
+            height: 32px;
+            background: white;
+            border: 1px solid #e0e0e0;
+            border-radius: 4px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+            transition: all 0.2s;
+            z-index: 10;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .schema-toggle-btn:hover {
+            background: #f0f0f0;
+            border-color: #667eea;
+        }
+
+        body.dark-mode .schema-toggle-btn {
+            background: #2d2d2d;
+            border-color: #505050;
+            color: #e0e0e0;
+        }
+
+        body.dark-mode .schema-toggle-btn:hover {
+            background: #3a3a3a;
+            border-color: #667eea;
         }
 
         .schema-search-box {
@@ -1394,6 +1437,42 @@
             display: flex;
             align-items: center;
             gap: 8px;
+        }
+
+        .schema-section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+
+        .schema-copy-btn {
+            padding: 6px 12px;
+            background: #f0f0f0;
+            border: 1px solid #d0d0d0;
+            border-radius: 4px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .schema-copy-btn:hover {
+            background: #e0e0e0;
+            border-color: #667eea;
+        }
+
+        body.dark-mode .schema-copy-btn {
+            background: #3a3a3a;
+            border-color: #505050;
+            color: #e0e0e0;
+        }
+
+        body.dark-mode .schema-copy-btn:hover {
+            background: #454545;
+            border-color: #667eea;
         }
 
         .schema-stats-grid {
@@ -1810,7 +1889,10 @@
             <div class="tab-pane" id="tab-schema">
                 <div class="schema-explorer">
                     <!-- Schema Sidebar -->
-                    <div class="schema-sidebar">
+                    <div class="schema-sidebar" id="schemaSidebar">
+                        <button class="schema-toggle-btn" onclick="toggleSchemaSidebar()" title="Toggle Sidebar">
+                            ◀
+                        </button>
                         <div class="schema-search-box">
                             <input type="text" class="schema-search-input" id="schemaSearch" placeholder="🔍 Search tables...">
                         </div>
@@ -3319,8 +3401,13 @@
             if (ddl && ddl.ddl && !ddl.error) {
                 html += `
                     <div class="schema-section">
-                        <div class="schema-section-title">📝 DDL (Create Statement)</div>
-                        <div class="schema-ddl-container">${escapeHtml(ddl.ddl)}</div>
+                        <div class="schema-section-header">
+                            <div class="schema-section-title">📝 DDL (Create Statement)</div>
+                            <button class="schema-copy-btn" onclick="copySchemaDDL('${tableName}')">
+                                📋 Copy DDL
+                            </button>
+                        </div>
+                        <div class="schema-ddl-container" id="schemaDDL-${tableName}">${escapeHtml(ddl.ddl)}</div>
                     </div>
                 `;
             }
@@ -3356,6 +3443,36 @@
                 await loadSchemaTables();
             }
         };
+
+        // Toggle schema sidebar collapse
+        function toggleSchemaSidebar() {
+            const sidebar = document.getElementById('schemaSidebar');
+            const toggleBtn = sidebar.querySelector('.schema-toggle-btn');
+
+            sidebar.classList.toggle('collapsed');
+
+            if (sidebar.classList.contains('collapsed')) {
+                toggleBtn.textContent = '▶';
+                toggleBtn.title = 'Expand Sidebar';
+            } else {
+                toggleBtn.textContent = '◀';
+                toggleBtn.title = 'Collapse Sidebar';
+            }
+        }
+
+        // Copy DDL to clipboard
+        function copySchemaDDL(tableName) {
+            const ddlContainer = document.getElementById(`schemaDDL-${tableName}`);
+            if (!ddlContainer) return;
+
+            const ddlText = ddlContainer.textContent;
+            navigator.clipboard.writeText(ddlText).then(() => {
+                showToast('✓ DDL copied to clipboard', 'success');
+            }).catch(err => {
+                console.error('Failed to copy DDL:', err);
+                showToast('Failed to copy DDL', 'error');
+            });
+        }
 
         // Initialize on load
         init();
