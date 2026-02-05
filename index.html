@@ -4,6 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Database Viewer</title>
+    <!-- CodeMirror for SQL syntax highlighting -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/dracula.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/sql/sql.min.js"></script>
     <style>
         * {
             margin: 0;
@@ -17,6 +22,80 @@
             display: flex;
             flex-direction: column;
             background: #f5f5f5;
+            transition: background-color 0.3s, color 0.3s;
+        }
+
+        /* Dark Mode */
+        body.dark-mode {
+            background: #1a1a1a;
+            color: #e0e0e0;
+        }
+
+        body.dark-mode .header {
+            background: linear-gradient(135deg, #4a5568 0%, #2d3748 100%);
+        }
+
+        body.dark-mode .sidebar,
+        body.dark-mode .query-section,
+        body.dark-mode .modal,
+        body.dark-mode .query-history-panel {
+            background: #2d2d2d;
+            color: #e0e0e0;
+            border-color: #404040;
+        }
+
+        body.dark-mode .table-container,
+        body.dark-mode .context-menu {
+            background: #2d2d2d;
+            border-color: #404040;
+        }
+
+        body.dark-mode input,
+        body.dark-mode select,
+        body.dark-mode button.btn-secondary {
+            background: #3a3a3a;
+            color: #e0e0e0;
+            border-color: #505050;
+        }
+
+        body.dark-mode .table-item:hover {
+            background: #3a3a3a;
+        }
+
+        body.dark-mode .table-item.active {
+            background: #4a5568;
+        }
+
+        body.dark-mode thead {
+            background: #3a3a3a;
+        }
+
+        body.dark-mode tbody tr:hover {
+            background: #3a3a3a;
+        }
+
+        body.dark-mode th,
+        body.dark-mode td {
+            border-color: #404040;
+            color: #e0e0e0;
+        }
+
+        body.dark-mode .context-menu-item:hover {
+            background: #3a3a3a;
+        }
+
+        body.dark-mode .query-history-item {
+            background: #3a3a3a;
+            border-color: #505050;
+        }
+
+        body.dark-mode .query-history-item:hover {
+            background: #454545;
+        }
+
+        body.dark-mode .CodeMirror {
+            background: #2d2d2d;
+            color: #e0e0e0;
         }
 
         /* Header */
@@ -702,6 +781,211 @@
             color: #666;
             line-height: 1.6;
         }
+
+        /* CodeMirror custom styles */
+        .CodeMirror {
+            height: auto;
+            min-height: 100px;
+            border: 1px solid #d0d0d0;
+            border-radius: 6px;
+            font-size: 13px;
+            font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+        }
+
+        .CodeMirror-focused {
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        /* Query History Panel */
+        .query-history-panel {
+            position: fixed;
+            right: 0;
+            top: 0;
+            bottom: 0;
+            width: 350px;
+            background: white;
+            box-shadow: -2px 0 8px rgba(0,0,0,0.1);
+            transform: translateX(100%);
+            transition: transform 0.3s ease;
+            z-index: 1000;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .query-history-panel.show {
+            transform: translateX(0);
+        }
+
+        .query-history-header {
+            padding: 16px;
+            border-bottom: 1px solid #e0e0e0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .query-history-header h3 {
+            font-size: 16px;
+            font-weight: 600;
+        }
+
+        .query-history-close {
+            background: rgba(255,255,255,0.2);
+            border: none;
+            color: white;
+            font-size: 20px;
+            cursor: pointer;
+            width: 28px;
+            height: 28px;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background 0.2s;
+        }
+
+        .query-history-close:hover {
+            background: rgba(255,255,255,0.3);
+        }
+
+        .query-history-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 8px;
+        }
+
+        .query-history-item {
+            padding: 12px;
+            margin-bottom: 8px;
+            background: #f9fafb;
+            border: 1px solid #e0e0e0;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 12px;
+            font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+            word-break: break-all;
+            position: relative;
+        }
+
+        .query-history-item:hover {
+            background: #f0f0f0;
+            border-color: #667eea;
+            transform: translateX(-2px);
+        }
+
+        .query-history-item-time {
+            font-size: 10px;
+            color: #999;
+            margin-top: 6px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }
+
+        .query-history-item-delete {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            background: rgba(239, 68, 68, 0.1);
+            border: none;
+            color: #ef4444;
+            font-size: 16px;
+            cursor: pointer;
+            width: 24px;
+            height: 24px;
+            border-radius: 4px;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+        }
+
+        .query-history-item:hover .query-history-item-delete {
+            display: flex;
+        }
+
+        .query-history-item-delete:hover {
+            background: rgba(239, 68, 68, 0.2);
+        }
+
+        .query-history-toggle {
+            position: fixed;
+            right: 16px;
+            bottom: 16px;
+            width: 56px;
+            height: 56px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            font-size: 24px;
+            cursor: pointer;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+            z-index: 999;
+        }
+
+        .query-history-toggle:hover {
+            transform: scale(1.1);
+            box-shadow: 0 6px 16px rgba(0,0,0,0.2);
+        }
+
+        .query-history-empty {
+            text-align: center;
+            color: #999;
+            padding: 40px 20px;
+        }
+
+        .query-history-clear {
+            padding: 8px 16px;
+            background: rgba(239, 68, 68, 0.1);
+            color: #ef4444;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.2s;
+        }
+
+        .query-history-clear:hover {
+            background: rgba(239, 68, 68, 0.2);
+        }
+
+        /* Theme Toggle Button */
+        .theme-toggle {
+            position: absolute;
+            right: 24px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+            border: none;
+            font-size: 20px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+            z-index: 999;
+        }
+
+        .theme-toggle:hover {
+            background: rgba(255, 255, 255, 0.3);
+            transform: translateY(-50%) scale(1.1);
+            box-shadow: none;
+        }
+
+        .header {
+            position: relative;
+        }
     </style>
 </head>
 <body>
@@ -711,6 +995,10 @@
         <div class="connection-info" id="connectionInfo">
             <span>Loading...</span>
         </div>
+        <!-- Theme Toggle Button -->
+        <button class="theme-toggle" onclick="toggleTheme()" id="themeToggle" title="Toggle Theme">
+            🌙
+        </button>
     </div>
 
     <!-- Main Container -->
@@ -757,6 +1045,9 @@
                     <h3>Results</h3>
                     <div style="display: flex; gap: 12px; align-items: center;">
                         <span class="results-info" id="resultsInfo"></span>
+                        <button class="btn-success" onclick="exportToJSON()" id="exportJsonBtn" style="display: none;">
+                            <span>📥 Export JSON</span>
+                        </button>
                         <button class="btn-success" onclick="exportToCSV()" id="exportBtn" style="display: none;">
                             <span>📥 Export CSV</span>
                         </button>
@@ -821,6 +1112,25 @@
         </div>
     </div>
 
+    <!-- Query History Panel -->
+    <div class="query-history-panel" id="queryHistoryPanel">
+        <div class="query-history-header">
+            <h3>📜 Query History</h3>
+            <button class="query-history-close" onclick="toggleQueryHistory()">×</button>
+        </div>
+        <div class="query-history-list" id="queryHistoryList">
+            <div class="query-history-empty">No query history yet</div>
+        </div>
+        <div style="padding: 12px; border-top: 1px solid #e0e0e0;">
+            <button class="query-history-clear" onclick="clearQueryHistory()">🗑️ Clear All</button>
+        </div>
+    </div>
+
+    <!-- Query History Toggle Button -->
+    <button class="query-history-toggle" onclick="toggleQueryHistory()" title="Query History">
+        📜
+    </button>
+
     <script>
         // Get base path from current location
         const basePath = window.location.pathname.replace(/\/$/, '');
@@ -828,12 +1138,37 @@
 
         let currentResults = null;
         let selectedTable = null;
+        let sqlEditor = null;
+        const MAX_HISTORY_SIZE = 100;
+        const HISTORY_STORAGE_KEY = 'sqlQueryHistory';
 
         // Initialize app
         async function init() {
+            initCodeMirror();
+            loadQueryHistory();
+            loadTheme();
             await loadConnectionInfo();
             await loadDatabases();
             await loadTables();
+        }
+
+        // Initialize CodeMirror for SQL syntax highlighting
+        function initCodeMirror() {
+            const textarea = document.getElementById('sqlQuery');
+            sqlEditor = CodeMirror.fromTextArea(textarea, {
+                mode: 'text/x-sql',
+                theme: 'dracula',
+                lineNumbers: true,
+                lineWrapping: true,
+                autofocus: false,
+                tabSize: 2,
+                indentWithTabs: false,
+                extraKeys: {
+                    'Ctrl-Enter': executeQuery,
+                    'Cmd-Enter': executeQuery
+                }
+            });
+            sqlEditor.setSize(null, 120);
         }
 
         // Load connection info
@@ -988,7 +1323,12 @@
                 }
 
                 displayResults(data);
-                document.getElementById('sqlQuery').value = `SELECT * FROM ${tableName} LIMIT 100`;
+                const queryText = `SELECT * FROM ${tableName} LIMIT 100`;
+                if (sqlEditor) {
+                    sqlEditor.setValue(queryText);
+                } else {
+                    document.getElementById('sqlQuery').value = queryText;
+                }
             } catch (error) {
                 showError('Failed to load table data: ' + error.message);
             }
@@ -996,10 +1336,22 @@
 
         // Execute query
         async function executeQuery() {
-            const query = document.getElementById('sqlQuery').value.trim();
+            const rawQuery = sqlEditor ? sqlEditor.getValue() : document.getElementById('sqlQuery').value;
+
+            if (!rawQuery.trim()) {
+                showError('Please enter a SQL query');
+                return;
+            }
+
+            // Filter out comment lines (lines starting with "-- ")
+            const query = rawQuery
+                .split('\n')
+                .filter(line => !line.trim().startsWith('--'))
+                .join('\n')
+                .trim();
 
             if (!query) {
-                showError('Please enter a SQL query');
+                showError('Query is empty after removing comments');
                 return;
             }
 
@@ -1027,6 +1379,8 @@
                 }
 
                 displayResults(data);
+                // Save to history only on successful execution
+                saveQueryToHistory(rawQuery);
             } catch (error) {
                 showError('Query failed: ' + error.message);
             } finally {
@@ -1041,6 +1395,7 @@
             const container = document.getElementById('resultsContainer');
             const info = document.getElementById('resultsInfo');
             const exportBtn = document.getElementById('exportBtn');
+            const exportJsonBtn = document.getElementById('exportJsonBtn');
 
             if (!data.rows || data.rows.length === 0) {
                 container.innerHTML = `
@@ -1051,6 +1406,7 @@
                 `;
                 info.textContent = '';
                 exportBtn.style.display = 'none';
+                exportJsonBtn.style.display = 'none';
                 return;
             }
 
@@ -1075,6 +1431,7 @@
 
             info.textContent = `${data.count} row${data.count !== 1 ? 's' : ''}`;
             exportBtn.style.display = 'flex';
+            exportJsonBtn.style.display = 'flex';
         }
 
         // Export to CSV
@@ -1110,9 +1467,45 @@
             document.body.removeChild(link);
         }
 
+        // Export to JSON
+        function exportToJSON() {
+            if (!currentResults || !currentResults.rows) {
+                return;
+            }
+
+            // Convert rows to array of objects
+            const jsonData = currentResults.rows.map(row => {
+                const obj = {};
+                currentResults.columns.forEach((col, index) => {
+                    obj[col] = row[index];
+                });
+                return obj;
+            });
+
+            // Create JSON string with pretty formatting
+            const jsonString = JSON.stringify(jsonData, null, 2);
+
+            // Download
+            const blob = new Blob([jsonString], { type: 'application/json;charset=utf-8;' });
+            const link = document.createElement('a');
+            const url = URL.createObjectURL(blob);
+
+            link.setAttribute('href', url);
+            link.setAttribute('download', `query_result_${Date.now()}.json`);
+            link.style.visibility = 'hidden';
+
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
         // Clear query
         function clearQuery() {
-            document.getElementById('sqlQuery').value = '';
+            if (sqlEditor) {
+                sqlEditor.setValue('');
+            } else {
+                document.getElementById('sqlQuery').value = '';
+            }
         }
 
         // Show loading
@@ -1418,10 +1811,216 @@
             if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
                 executeQuery();
             }
-            // Escape to close modal
+            // Escape to close modal and panels
             if (e.key === 'Escape') {
                 closeModal();
                 closeContextMenu();
+                // Close query history panel if open
+                const panel = document.getElementById('queryHistoryPanel');
+                if (panel && panel.classList.contains('show')) {
+                    panel.classList.remove('show');
+                }
+            }
+        });
+
+        // ===== Query History Functions =====
+
+        // Save query to history
+        function saveQueryToHistory(query) {
+            if (!query || !query.trim()) return;
+
+            const history = getQueryHistory();
+            const timestamp = new Date().toISOString();
+
+            // Check if query already exists, remove it to avoid duplicates
+            const existingIndex = history.findIndex(item => item.query === query);
+            if (existingIndex !== -1) {
+                history.splice(existingIndex, 1);
+            }
+
+            // Add to the beginning of the array
+            history.unshift({ query, timestamp });
+
+            // Keep only the latest MAX_HISTORY_SIZE items
+            if (history.length > MAX_HISTORY_SIZE) {
+                history.splice(MAX_HISTORY_SIZE);
+            }
+
+            // Save to localStorage
+            try {
+                localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(history));
+                renderQueryHistory();
+            } catch (error) {
+                console.error('Failed to save query history:', error);
+            }
+        }
+
+        // Get query history from localStorage
+        function getQueryHistory() {
+            try {
+                const history = localStorage.getItem(HISTORY_STORAGE_KEY);
+                return history ? JSON.parse(history) : [];
+            } catch (error) {
+                console.error('Failed to load query history:', error);
+                return [];
+            }
+        }
+
+        // Load and render query history
+        function loadQueryHistory() {
+            renderQueryHistory();
+        }
+
+        // Render query history list
+        function renderQueryHistory() {
+            const history = getQueryHistory();
+            const listEl = document.getElementById('queryHistoryList');
+
+            if (history.length === 0) {
+                listEl.innerHTML = '<div class="query-history-empty">No query history yet</div>';
+                return;
+            }
+
+            let html = '';
+            history.forEach((item, index) => {
+                const date = new Date(item.timestamp);
+                const timeStr = date.toLocaleString();
+                const truncatedQuery = item.query.length > 100
+                    ? item.query.substring(0, 100) + '...'
+                    : item.query;
+
+                html += `
+                    <div class="query-history-item" data-index="${index}">
+                        ${escapeHtml(truncatedQuery)}
+                        <div class="query-history-item-time">${timeStr}</div>
+                        <button class="query-history-item-delete" onclick="deleteHistoryItem(${index}, event)" title="Delete">×</button>
+                    </div>
+                `;
+            });
+
+            listEl.innerHTML = html;
+
+            // Add click event listeners
+            document.querySelectorAll('.query-history-item').forEach((item, index) => {
+                // Single click: show in editor
+                item.addEventListener('click', (e) => {
+                    if (e.target.classList.contains('query-history-item-delete')) {
+                        return; // Ignore if clicking delete button
+                    }
+                    const query = history[index].query;
+                    if (sqlEditor) {
+                        sqlEditor.setValue(query);
+                    } else {
+                        document.getElementById('sqlQuery').value = query;
+                    }
+                    showToast('Query loaded to editor', 'success');
+                });
+
+                // Double click: show in editor and execute
+                item.addEventListener('dblclick', (e) => {
+                    if (e.target.classList.contains('query-history-item-delete')) {
+                        return; // Ignore if clicking delete button
+                    }
+                    const query = history[index].query;
+                    if (sqlEditor) {
+                        sqlEditor.setValue(query);
+                    } else {
+                        document.getElementById('sqlQuery').value = query;
+                    }
+                    executeQuery();
+                    showToast('Query executed', 'success');
+                });
+            });
+        }
+
+        // Toggle query history panel
+        function toggleQueryHistory() {
+            const panel = document.getElementById('queryHistoryPanel');
+            panel.classList.toggle('show');
+        }
+
+        // Clear all query history
+        function clearQueryHistory() {
+            if (!confirm('Are you sure you want to clear all query history?')) {
+                return;
+            }
+
+            try {
+                localStorage.removeItem(HISTORY_STORAGE_KEY);
+                renderQueryHistory();
+                showToast('Query history cleared', 'success');
+            } catch (error) {
+                console.error('Failed to clear query history:', error);
+                showToast('Failed to clear history', 'error');
+            }
+        }
+
+        // Delete a single history item
+        function deleteHistoryItem(index, event) {
+            event.stopPropagation(); // Prevent triggering the item click
+
+            const history = getQueryHistory();
+            history.splice(index, 1);
+
+            try {
+                localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(history));
+                renderQueryHistory();
+                showToast('History item deleted', 'success');
+            } catch (error) {
+                console.error('Failed to delete history item:', error);
+                showToast('Failed to delete item', 'error');
+            }
+        }
+
+        // ===== Theme Functions =====
+
+        // Toggle theme between light and dark
+        function toggleTheme() {
+            const body = document.body;
+            const themeToggle = document.getElementById('themeToggle');
+
+            if (body.classList.contains('dark-mode')) {
+                body.classList.remove('dark-mode');
+                themeToggle.textContent = '🌙';
+                localStorage.setItem('theme', 'light');
+            } else {
+                body.classList.add('dark-mode');
+                themeToggle.textContent = '☀️';
+                localStorage.setItem('theme', 'dark');
+            }
+
+            // Refresh CodeMirror to apply theme
+            if (sqlEditor) {
+                sqlEditor.refresh();
+            }
+        }
+
+        // Load saved theme
+        function loadTheme() {
+            const savedTheme = localStorage.getItem('theme');
+            const body = document.body;
+            const themeToggle = document.getElementById('themeToggle');
+
+            if (savedTheme === 'dark') {
+                body.classList.add('dark-mode');
+                themeToggle.textContent = '☀️';
+            } else {
+                themeToggle.textContent = '🌙';
+            }
+        }
+
+        // ===== Click Outside to Close =====
+
+        // Close query history panel when clicking outside
+        document.addEventListener('click', (e) => {
+            const panel = document.getElementById('queryHistoryPanel');
+            const toggleBtn = document.querySelector('.query-history-toggle');
+
+            // Check if panel is open and click is outside panel and not on toggle button
+            if (panel.classList.contains('show') &&
+                !panel.contains(e.target) &&
+                e.target !== toggleBtn) {
+                panel.classList.remove('show');
             }
         });
 
