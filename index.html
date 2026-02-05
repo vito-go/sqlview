@@ -139,6 +139,50 @@
             display: flex;
             flex-direction: column;
             overflow: hidden;
+            transition: width 0.3s ease, margin-left 0.3s ease;
+            position: relative;
+        }
+
+        .sidebar.collapsed {
+            width: 0;
+            margin-left: -280px;
+            border-right: none;
+        }
+
+        .sidebar-toggle-btn {
+            position: absolute;
+            right: -40px;
+            top: 16px;
+            width: 32px;
+            height: 32px;
+            background: white;
+            border: 1px solid #e0e0e0;
+            border-radius: 4px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+            transition: all 0.2s;
+            z-index: 100;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .sidebar-toggle-btn:hover {
+            background: #f0f0f0;
+            border-color: #667eea;
+            transform: scale(1.05);
+        }
+
+        body.dark-mode .sidebar-toggle-btn {
+            background: #2d2d2d;
+            border-color: #505050;
+            color: #e0e0e0;
+        }
+
+        body.dark-mode .sidebar-toggle-btn:hover {
+            background: #3a3a3a;
+            border-color: #667eea;
         }
 
         .sidebar-section {
@@ -146,13 +190,45 @@
             border-bottom: 1px solid #e0e0e0;
         }
 
+        .sidebar-section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
         .sidebar-section h3 {
             font-size: 12px;
             font-weight: 600;
             text-transform: uppercase;
             color: #666;
-            margin-bottom: 8px;
             letter-spacing: 0.5px;
+        }
+
+        .sidebar-collapse-btn {
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 16px;
+            padding: 4px;
+            color: #666;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .sidebar-collapse-btn:hover {
+            color: #667eea;
+            transform: scale(1.1);
+        }
+
+        body.dark-mode .sidebar-collapse-btn {
+            color: #999;
+        }
+
+        body.dark-mode .sidebar-collapse-btn:hover {
+            color: #667eea;
         }
 
         .search-box {
@@ -1266,49 +1342,6 @@
             display: flex;
             flex-direction: column;
             overflow: hidden;
-            transition: width 0.3s ease, margin-left 0.3s ease;
-            position: relative;
-        }
-
-        .schema-sidebar.collapsed {
-            width: 0;
-            margin-left: -300px;
-            border-right: none;
-        }
-
-        .schema-toggle-btn {
-            position: absolute;
-            right: -40px;
-            top: 16px;
-            width: 32px;
-            height: 32px;
-            background: white;
-            border: 1px solid #e0e0e0;
-            border-radius: 4px;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 16px;
-            transition: all 0.2s;
-            z-index: 10;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        }
-
-        .schema-toggle-btn:hover {
-            background: #f0f0f0;
-            border-color: #667eea;
-        }
-
-        body.dark-mode .schema-toggle-btn {
-            background: #2d2d2d;
-            border-color: #505050;
-            color: #e0e0e0;
-        }
-
-        body.dark-mode .schema-toggle-btn:hover {
-            background: #3a3a3a;
-            border-color: #667eea;
         }
 
         .schema-search-box {
@@ -1723,9 +1756,14 @@
     <!-- Main Container -->
     <div class="container">
         <!-- Sidebar -->
-        <div class="sidebar">
+        <div class="sidebar" id="mainSidebar">
+            <button class="sidebar-toggle-btn" onclick="toggleMainSidebar()" title="Toggle Sidebar">
+                ◀
+            </button>
             <div class="sidebar-section">
-                <h3>Database / Schema</h3>
+                <div class="sidebar-section-header">
+                    <h3>Database / Schema</h3>
+                </div>
                 <select id="databaseSelect">
                     <option>Loading...</option>
                 </select>
@@ -1889,10 +1927,7 @@
             <div class="tab-pane" id="tab-schema">
                 <div class="schema-explorer">
                     <!-- Schema Sidebar -->
-                    <div class="schema-sidebar" id="schemaSidebar">
-                        <button class="schema-toggle-btn" onclick="toggleSchemaSidebar()" title="Toggle Sidebar">
-                            ◀
-                        </button>
+                    <div class="schema-sidebar">
                         <div class="schema-search-box">
                             <input type="text" class="schema-search-input" id="schemaSearch" placeholder="🔍 Search tables...">
                         </div>
@@ -3444,10 +3479,10 @@
             }
         };
 
-        // Toggle schema sidebar collapse
-        function toggleSchemaSidebar() {
-            const sidebar = document.getElementById('schemaSidebar');
-            const toggleBtn = sidebar.querySelector('.schema-toggle-btn');
+        // Toggle main sidebar collapse
+        function toggleMainSidebar() {
+            const sidebar = document.getElementById('mainSidebar');
+            const toggleBtn = sidebar.querySelector('.sidebar-toggle-btn');
 
             sidebar.classList.toggle('collapsed');
 
