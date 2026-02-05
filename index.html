@@ -129,6 +129,7 @@
             display: flex;
             flex: 1;
             overflow: hidden;
+            position: relative;
         }
 
         /* Sidebar */
@@ -150,29 +151,47 @@
         }
 
         .sidebar-toggle-btn {
-            background: none;
-            border: none;
+            position: absolute;
+            left: 16px;
+            top: 16px;
+            width: 32px;
+            height: 32px;
+            background: white;
+            border: 1px solid #e0e0e0;
+            border-radius: 6px;
             cursor: pointer;
-            font-size: 14px;
-            padding: 4px 8px;
+            font-size: 16px;
             color: #666;
             transition: all 0.2s;
             display: flex;
             align-items: center;
             justify-content: center;
+            z-index: 200;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.1);
         }
 
         .sidebar-toggle-btn:hover {
+            background: #f5f5ff;
             color: #667eea;
-            transform: scale(1.2);
+            border-color: #667eea;
+            transform: scale(1.05);
+            box-shadow: 0 4px 8px rgba(102, 126, 234, 0.2);
+        }
+
+        .sidebar.collapsed .sidebar-toggle-btn {
+            left: 16px;
         }
 
         body.dark-mode .sidebar-toggle-btn {
+            background: #2d2d2d;
+            border-color: #505050;
             color: #999;
         }
 
         body.dark-mode .sidebar-toggle-btn:hover {
+            background: #3a3a3a;
             color: #667eea;
+            border-color: #667eea;
         }
 
         .sidebar-section {
@@ -1745,14 +1764,16 @@
 
     <!-- Main Container -->
     <div class="container">
+        <!-- Sidebar Toggle Button -->
+        <button class="sidebar-toggle-btn" onclick="toggleMainSidebar()" title="Toggle Sidebar" id="sidebarToggleBtn">
+            ◀
+        </button>
+
         <!-- Sidebar -->
         <div class="sidebar" id="mainSidebar">
             <div class="sidebar-section">
                 <div class="sidebar-section-header">
                     <h3>Database / Schema</h3>
-                    <button class="sidebar-toggle-btn" onclick="toggleMainSidebar()" title="Toggle Sidebar">
-                        ◀
-                    </button>
                 </div>
                 <select id="databaseSelect">
                     <option>Loading...</option>
@@ -3472,7 +3493,7 @@
         // Toggle main sidebar collapse
         function toggleMainSidebar() {
             const sidebar = document.getElementById('mainSidebar');
-            const toggleBtn = sidebar.querySelector('.sidebar-toggle-btn');
+            const toggleBtn = document.getElementById('sidebarToggleBtn');
 
             sidebar.classList.toggle('collapsed');
 
