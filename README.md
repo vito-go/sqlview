@@ -16,27 +16,38 @@
 
 ## ✨ Features
 
+### Core Features
 - 🚀 **Zero Dependencies** - Single HTML file embedded, no external assets
 - 🔌 **Easy Integration** - Mount to any HTTP server in 2 lines of code
 - 🗄️ **Multi-Database Support** - PostgreSQL, MySQL, SQLite
-- 🎨 **Modern UI** - Clean, responsive web interface
-- 🔍 **Smart Ordering** - Automatically sorts by ID, updated_at, etc.
-- 📊 **Table Inspector** - View schema, indexes, DDL, statistics
-- 💾 **CSV Export** - Export query results (client-side)
 - 🔒 **Read-Only** - Only SELECT queries allowed for safety
-- 🎯 **Context Menu** - Right-click for quick actions
 - 🌐 **Multi-Database Mode** - Switch between databases on the fly
+
+### UI Features (v0.1.0+)
+- 🎨 **Modern Tabbed Interface** - SQL Query, Schema Explorer, Charts
+- 📋 **Schema Explorer** - Comprehensive database structure viewer with stats
+- 📊 **Data Visualization** - Interactive charts (Bar, Line, Pie, Doughnut)
+- ✨ **SQL Syntax Highlighting** - Powered by CodeMirror with multiple themes
+- 📜 **Query History** - Local storage of recent 100 queries
+- 🌓 **Dark/Light Theme** - Toggle between themes with persistent preference
+- 💾 **Multi-Format Export** - Export to CSV or JSON (client-side)
+- 🎯 **Smart Context Menu** - Quick access to common operations
+- 🔍 **Collapsible Sidebar** - More space when you need it
+- 📱 **Responsive Design** - Works beautifully on all screen sizes
 
 ## 📸 Screenshots
 
-### Main Interface
-Browse databases, tables, and run queries with a modern web UI.
+### SQL Query Tab
+Execute SQL queries with syntax highlighting, view results in formatted tables, and export to CSV/JSON.
 
-### Context Menu
-Right-click any table for quick actions: view data, schema, indexes, DDL, or statistics.
+### Schema Explorer Tab
+Explore database structure with detailed column information, indexes, DDL statements, and table statistics.
 
-### Table Statistics
-View row counts, table sizes, and index information.
+### Charts Tab
+Visualize your data with interactive charts - choose from bar, line, pie, or doughnut charts with configurable axes and aggregations.
+
+### Dark Theme
+Beautiful dark mode support across all tabs and components.
 
 ## 🚀 Quick Start
 
@@ -157,32 +168,55 @@ import (
 
 ## 🎯 Features
 
+### Tab 1: SQL Query
+
+**Advanced SQL Editor**
+- ✨ **Syntax Highlighting** - CodeMirror integration with multiple themes
+- ⌨️ **Keyboard Shortcuts** - `Ctrl/Cmd + Enter` to execute
+- 📜 **Query History** - Access your recent 100 queries
+  - Single-click to load query
+  - Double-click to load and execute
+  - Delete individual or all history
+- 🔒 **Read-Only Mode** - Only SELECT and WITH queries allowed
+- 💾 **Export Results** - CSV and JSON formats
+- 🎨 **Comment Support** - Write comments with `--`, auto-filtered before execution
+
+### Tab 2: Schema Explorer
+
+**Comprehensive Structure Viewer**
+- 📊 **Overview Section** - Row count, table size, index size statistics
+- 📝 **Columns Section** - Detailed column information with badges (PK, UNIQUE, INDEX)
+- 🔑 **Indexes Section** - Complete index details with types and columns
+- 📋 **DDL Section** - CREATE TABLE statements with one-click copy
+- 🔍 **Table Search** - Real-time filtering of table list
+- 🎯 **Quick Actions** - Copy name, view data buttons
+
+### Tab 3: Charts
+
+**Interactive Data Visualization**
+- 📊 **Chart Types** - Bar, Line, Pie, Doughnut charts
+- 🎨 **Configurable Axes** - Select any column for X/Y axes
+- 📈 **Aggregations** - COUNT, SUM, AVG, MAX, MIN
+- 🎯 **Smart Recommendations** - Auto-detect numeric columns for Y-axis
+- 📉 **Data Limits** - Choose 10, 20, 50, or 100 records
+- 🌓 **Theme Aware** - Charts adapt to light/dark theme
+
 ### Table Operations
 
-**Right-click any table** to access:
-
-- 📊 **View Data** - Display table contents (first 100 rows by default)
-- 📐 **View Schema** - Column names, types, nullable, defaults
-- 🔑 **View Indexes** - Index names, types, columns, uniqueness
-- 📝 **View DDL** - Complete CREATE TABLE and CREATE INDEX statements
-- 📈 **View Statistics** - Row count, table size, index size
+**Right-click any table** for quick access:
+- 📊 **View Data** - Display table contents (auto-switches to Query tab)
+- 🔍 **Open in Schema Explorer** - Jump to full structure view
 - 📋 **Copy Table Name** - Copy to clipboard
-
-### SQL Query Editor
-
-- ✏️ Multi-line SQL editor with syntax highlighting
-- ⌨️ Keyboard shortcuts: `Ctrl/Cmd + Enter` to execute
-- 🔒 Read-only mode: Only SELECT and WITH queries allowed
-- 💾 CSV export for query results
-- 📊 Formatted result table
 
 ### Smart Features
 
 - 🔍 **Table Search** - Real-time table name filtering
 - 🎯 **Smart Ordering** - Auto-sorts by id, updated_at, created_at DESC
 - 🌐 **Multi-Database Switching** - Browse different databases
-- 📱 **Responsive Design** - Works on desktop and mobile
-- ⌨️ **Keyboard Shortcuts** - ESC to close modals/menus
+- 🌓 **Theme Toggle** - Switch between dark/light themes (persistent)
+- 📱 **Responsive Design** - Works beautifully on all screen sizes
+- ⌨️ **Keyboard Shortcuts** - `Ctrl/Cmd + Enter` to execute, `ESC` to close
+- 🔄 **Collapsible Sidebar** - Maximize content area when needed
 
 ## 🔒 Security
 
