@@ -7,6 +7,7 @@
     <!-- CodeMirror for SQL syntax highlighting -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/dracula.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/eclipse.min.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/sql/sql.min.js"></script>
     <style>
@@ -91,11 +92,6 @@
 
         body.dark-mode .query-history-item:hover {
             background: #454545;
-        }
-
-        body.dark-mode .CodeMirror {
-            background: #2d2d2d;
-            color: #e0e0e0;
         }
 
         /* Header */
@@ -1144,9 +1140,9 @@
 
         // Initialize app
         async function init() {
+            loadTheme(); // Load theme first before initializing CodeMirror
             initCodeMirror();
             loadQueryHistory();
-            loadTheme();
             await loadConnectionInfo();
             await loadDatabases();
             await loadTables();
@@ -1155,9 +1151,11 @@
         // Initialize CodeMirror for SQL syntax highlighting
         function initCodeMirror() {
             const textarea = document.getElementById('sqlQuery');
+            const isDarkMode = document.body.classList.contains('dark-mode');
+
             sqlEditor = CodeMirror.fromTextArea(textarea, {
                 mode: 'text/x-sql',
-                theme: 'dracula',
+                theme: isDarkMode ? 'dracula' : 'eclipse',
                 lineNumbers: true,
                 lineWrapping: true,
                 autofocus: false,
@@ -1983,10 +1981,18 @@
                 body.classList.remove('dark-mode');
                 themeToggle.textContent = '🌙';
                 localStorage.setItem('theme', 'light');
+                // Switch to light theme for CodeMirror
+                if (sqlEditor) {
+                    sqlEditor.setOption('theme', 'eclipse');
+                }
             } else {
                 body.classList.add('dark-mode');
                 themeToggle.textContent = '☀️';
                 localStorage.setItem('theme', 'dark');
+                // Switch to dark theme for CodeMirror
+                if (sqlEditor) {
+                    sqlEditor.setOption('theme', 'dracula');
+                }
             }
 
             // Refresh CodeMirror to apply theme
