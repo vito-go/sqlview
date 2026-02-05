@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
-
 	// Import database drivers
 	// Note: DBViewer itself does not import any drivers to avoid forcing dependencies.
 	// Import the drivers you need in your main package:
@@ -31,7 +30,6 @@ func buildSmartOrderBy(columns []string) string {
 
 	// Priority list of column names to order by (descending)
 	orderPriority := []string{
-		"id",
 		"updated_at",
 		"update_time",
 		"updated_time",
@@ -40,6 +38,7 @@ func buildSmartOrderBy(columns []string) string {
 		"create_time",
 		"created_time",
 		"createtime",
+		"id",
 	}
 
 	var orderFields []string
