@@ -2519,9 +2519,9 @@
                 // Build SQL query
                 let sql;
                 if (aggregation === 'COUNT') {
-                    sql = `SELECT ${xAxis}, COUNT(*) as value FROM ${table} GROUP BY ${xAxis} ORDER BY value DESC LIMIT ${limit}`;
+                    sql = `SELECT ${xAxis}, COUNT(*) as value FROM ${table} GROUP BY ${xAxis} ORDER BY ${xAxis} ASC LIMIT ${limit}`;
                 } else {
-                    sql = `SELECT ${xAxis}, ${aggregation}(${yAxis}) as value FROM ${table} GROUP BY ${xAxis} ORDER BY value DESC LIMIT ${limit}`;
+                    sql = `SELECT ${xAxis}, ${aggregation}(${yAxis}) as value FROM ${table} GROUP BY ${xAxis} ORDER BY ${xAxis} ASC LIMIT ${limit}`;
                 }
 
                 // Query data
