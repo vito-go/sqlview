@@ -2227,6 +2227,9 @@
 
         // Load table data
         async function loadTableData(tableName) {
+            // Switch to SQL Query tab first
+            switchTab('query');
+
             showLoading();
             clearError();
 
