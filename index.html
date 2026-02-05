@@ -10,6 +10,8 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/eclipse.min.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/sql/sql.min.js"></script>
+    <!-- Chart.js for data visualization -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <style>
         * {
             margin: 0;
@@ -982,6 +984,264 @@
         .header {
             position: relative;
         }
+
+        /* Tab Navigation */
+        .tab-nav {
+            display: flex;
+            background: white;
+            border-bottom: 2px solid #e0e0e0;
+            padding: 0 16px;
+            gap: 8px;
+        }
+
+        .tab-btn {
+            padding: 14px 24px;
+            border: none;
+            background: none;
+            cursor: pointer;
+            position: relative;
+            transition: all 0.2s;
+            font-size: 14px;
+            font-weight: 500;
+            color: #666;
+            border-radius: 8px 8px 0 0;
+        }
+
+        .tab-btn:hover {
+            background: #f5f5f5;
+            color: #333;
+        }
+
+        .tab-btn.active {
+            color: #667eea;
+            font-weight: 600;
+        }
+
+        .tab-btn.active::after {
+            content: '';
+            position: absolute;
+            bottom: -2px;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: #667eea;
+        }
+
+        body.dark-mode .tab-nav {
+            background: #2d2d2d;
+            border-color: #404040;
+        }
+
+        body.dark-mode .tab-btn {
+            color: #999;
+        }
+
+        body.dark-mode .tab-btn:hover {
+            background: #3a3a3a;
+            color: #e0e0e0;
+        }
+
+        body.dark-mode .tab-btn.active {
+            color: #667eea;
+        }
+
+        /* Tab Content */
+        .tab-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .tab-pane {
+            display: none;
+            flex: 1;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .tab-pane.active {
+            display: flex;
+        }
+
+        /* Chart Configuration Panel */
+        .chart-config {
+            background: white;
+            border-bottom: 1px solid #e0e0e0;
+            padding: 20px;
+        }
+
+        .chart-config h3 {
+            font-size: 14px;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 16px;
+        }
+
+        .config-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+            margin-bottom: 16px;
+        }
+
+        .config-item {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .config-item label {
+            font-size: 12px;
+            font-weight: 600;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .config-item select {
+            padding: 8px 12px;
+            border: 1px solid #d0d0d0;
+            border-radius: 6px;
+            font-size: 14px;
+            background: white;
+            cursor: pointer;
+            transition: border-color 0.2s;
+        }
+
+        .config-item select:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .chart-type-group {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        .chart-type-radio {
+            display: none;
+        }
+
+        .chart-type-label {
+            padding: 8px 16px;
+            border: 2px solid #d0d0d0;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 13px;
+            font-weight: 500;
+            color: #666;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .chart-type-label:hover {
+            border-color: #667eea;
+            background: #f5f5ff;
+        }
+
+        .chart-type-radio:checked + .chart-type-label {
+            border-color: #667eea;
+            background: #667eea;
+            color: white;
+        }
+
+        .chart-actions {
+            display: flex;
+            gap: 12px;
+            justify-content: flex-end;
+        }
+
+        body.dark-mode .chart-config {
+            background: #2d2d2d;
+            border-color: #404040;
+        }
+
+        body.dark-mode .chart-config h3,
+        body.dark-mode .config-item label {
+            color: #e0e0e0;
+        }
+
+        body.dark-mode .config-item select {
+            background: #3a3a3a;
+            color: #e0e0e0;
+            border-color: #505050;
+        }
+
+        body.dark-mode .chart-type-label {
+            border-color: #505050;
+            color: #999;
+        }
+
+        body.dark-mode .chart-type-label:hover {
+            border-color: #667eea;
+            background: rgba(102, 126, 234, 0.2);
+        }
+
+        body.dark-mode .chart-type-radio:checked + .chart-type-label {
+            border-color: #667eea;
+            background: #667eea;
+            color: white;
+        }
+
+        /* Chart Display Area */
+        .chart-display {
+            flex: 1;
+            overflow: auto;
+            padding: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .chart-container {
+            width: 100%;
+            max-width: 1200px;
+            height: 100%;
+            max-height: 600px;
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            position: relative;
+        }
+
+        .chart-placeholder {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: #999;
+        }
+
+        .chart-placeholder-icon {
+            font-size: 64px;
+            margin-bottom: 16px;
+        }
+
+        .chart-placeholder-text {
+            font-size: 16px;
+            margin-bottom: 8px;
+        }
+
+        .chart-placeholder-hint {
+            font-size: 13px;
+            color: #bbb;
+        }
+
+        body.dark-mode .chart-display {
+            background: #1a1a1a;
+        }
+
+        body.dark-mode .chart-container {
+            background: #2d2d2d;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+        }
     </style>
 </head>
 <body>
@@ -1020,8 +1280,22 @@
 
         <!-- Main Content -->
         <div class="main-content">
-            <!-- Query Section -->
-            <div class="query-section">
+            <!-- Tab Navigation -->
+            <div class="tab-nav">
+                <button class="tab-btn active" onclick="switchTab('query')" data-tab="query">
+                    🔍 SQL Query
+                </button>
+                <button class="tab-btn" onclick="switchTab('charts')" data-tab="charts">
+                    📊 Charts
+                </button>
+            </div>
+
+            <!-- Tab Content -->
+            <div class="tab-content">
+                <!-- Tab 1: SQL Query -->
+                <div class="tab-pane active" id="tab-query">
+                    <!-- Query Section -->
+                    <div class="query-section">
                 <div class="query-header">
                     <h3>SQL Query</h3>
                     <div class="query-actions">
@@ -1057,8 +1331,96 @@
                     </div>
                 </div>
             </div>
+                <!-- End Tab 1: SQL Query -->
+            </div>
+
+            <!-- Tab 2: Charts -->
+            <div class="tab-pane" id="tab-charts">
+                <!-- Chart Configuration Panel -->
+                <div class="chart-config">
+                    <h3>📊 Chart Configuration</h3>
+                    <div class="config-grid">
+                        <div class="config-item">
+                            <label>Table</label>
+                            <select id="chartTable" onchange="loadChartColumns()">
+                                <option value="">Select a table...</option>
+                            </select>
+                        </div>
+                        <div class="config-item">
+                            <label>X-Axis (Category)</label>
+                            <select id="chartXAxis">
+                                <option value="">Select X-axis...</option>
+                            </select>
+                        </div>
+                        <div class="config-item">
+                            <label>Y-Axis (Value)</label>
+                            <select id="chartYAxis">
+                                <option value="">Select Y-axis...</option>
+                            </select>
+                        </div>
+                        <div class="config-item">
+                            <label>Aggregation</label>
+                            <select id="chartAggregation">
+                                <option value="COUNT">COUNT - Count records</option>
+                                <option value="SUM">SUM - Sum values</option>
+                                <option value="AVG">AVG - Average values</option>
+                                <option value="MAX">MAX - Maximum value</option>
+                                <option value="MIN">MIN - Minimum value</option>
+                            </select>
+                        </div>
+                        <div class="config-item">
+                            <label>Limit</label>
+                            <select id="chartLimit">
+                                <option value="10">10 records</option>
+                                <option value="20" selected>20 records</option>
+                                <option value="50">50 records</option>
+                                <option value="100">100 records</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="config-item" style="margin-bottom: 16px;">
+                        <label>Chart Type</label>
+                        <div class="chart-type-group">
+                            <input type="radio" id="chartTypeBar" name="chartType" value="bar" class="chart-type-radio" checked>
+                            <label for="chartTypeBar" class="chart-type-label">📊 Bar Chart</label>
+
+                            <input type="radio" id="chartTypeLine" name="chartType" value="line" class="chart-type-radio">
+                            <label for="chartTypeLine" class="chart-type-label">📈 Line Chart</label>
+
+                            <input type="radio" id="chartTypePie" name="chartType" value="pie" class="chart-type-radio">
+                            <label for="chartTypePie" class="chart-type-label">🥧 Pie Chart</label>
+
+                            <input type="radio" id="chartTypeDoughnut" name="chartType" value="doughnut" class="chart-type-radio">
+                            <label for="chartTypeDoughnut" class="chart-type-label">🍩 Doughnut Chart</label>
+                        </div>
+                    </div>
+                    <div class="chart-actions">
+                        <button class="btn-secondary" onclick="clearChart()">Clear</button>
+                        <button class="btn-primary" onclick="generateChart()" id="generateChartBtn">
+                            <span>🎨 Generate Chart</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Chart Display Area -->
+                <div class="chart-display">
+                    <div class="chart-container" id="chartContainer">
+                        <div class="chart-placeholder">
+                            <div class="chart-placeholder-icon">📊</div>
+                            <div class="chart-placeholder-text">No chart generated yet</div>
+                            <div class="chart-placeholder-hint">Configure and generate a chart to visualize your data</div>
+                        </div>
+                        <canvas id="myChart" style="display: none;"></canvas>
+                    </div>
+                </div>
+            </div>
+            <!-- End Tab 2: Charts -->
         </div>
+        <!-- End Tab Content -->
+        </div>
+        <!-- End Main Content -->
     </div>
+    <!-- End Container -->
 
     <!-- Context Menu -->
     <div class="context-menu" id="contextMenu">
@@ -1135,6 +1497,7 @@
         let currentResults = null;
         let selectedTable = null;
         let sqlEditor = null;
+        let chartInstance = null;
         const MAX_HISTORY_SIZE = 100;
         const HISTORY_STORAGE_KEY = 'sqlQueryHistory';
 
@@ -1146,6 +1509,7 @@
             await loadConnectionInfo();
             await loadDatabases();
             await loadTables();
+            await initChartTables();
         }
 
         // Initialize CodeMirror for SQL syntax highlighting
@@ -2029,6 +2393,301 @@
                 panel.classList.remove('show');
             }
         });
+
+        // ===== Tab Functions =====
+
+        // Switch between tabs
+        function switchTab(tabName) {
+            // Remove active class from all tabs
+            document.querySelectorAll('.tab-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            document.querySelectorAll('.tab-pane').forEach(pane => {
+                pane.classList.remove('active');
+            });
+
+            // Add active class to selected tab
+            document.querySelector(`[data-tab="${tabName}"]`).classList.add('active');
+            document.getElementById(`tab-${tabName}`).classList.add('active');
+        }
+
+        // ===== Chart Functions =====
+
+        // Initialize chart tables dropdown
+        async function initChartTables() {
+            try {
+                const dbOrSchema = document.getElementById('databaseSelect').value;
+                const response = await fetch(`${apiBase}/tables?database=${dbOrSchema}`);
+                const tables = await response.json();
+
+                const select = document.getElementById('chartTable');
+                select.innerHTML = '<option value="">Select a table...</option>' +
+                    tables.map(table => `<option value="${table}">${table}</option>`).join('');
+            } catch (error) {
+                console.error('Failed to load chart tables:', error);
+            }
+        }
+
+        // Load columns for selected table
+        async function loadChartColumns() {
+            const table = document.getElementById('chartTable').value;
+            if (!table) {
+                document.getElementById('chartXAxis').innerHTML = '<option value="">Select X-axis...</option>';
+                document.getElementById('chartYAxis').innerHTML = '<option value="">Select Y-axis...</option>';
+                return;
+            }
+
+            try {
+                const dbOrSchema = document.getElementById('databaseSelect').value;
+                const response = await fetch(`${apiBase}/table-schema?database=${dbOrSchema}&table=${table}`);
+                const data = await response.json();
+
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+
+                // Populate X-axis (all columns)
+                const xAxisSelect = document.getElementById('chartXAxis');
+                xAxisSelect.innerHTML = '<option value="">Select X-axis...</option>' +
+                    data.columns.map(col => `<option value="${col.name}">${col.name} (${col.type})</option>`).join('');
+
+                // Populate Y-axis (prefer numeric columns)
+                const yAxisSelect = document.getElementById('chartYAxis');
+                const numericTypes = ['INTEGER', 'INT', 'BIGINT', 'SMALLINT', 'DECIMAL', 'NUMERIC',
+                                     'FLOAT', 'DOUBLE', 'REAL', 'NUMBER', 'MONEY'];
+                const numericColumns = data.columns.filter(col =>
+                    numericTypes.some(type => col.type.toUpperCase().includes(type))
+                );
+
+                yAxisSelect.innerHTML = '<option value="">Select Y-axis...</option>';
+
+                // Add numeric columns first
+                if (numericColumns.length > 0) {
+                    yAxisSelect.innerHTML += '<optgroup label="Numeric Columns (Recommended)">' +
+                        numericColumns.map(col => `<option value="${col.name}">${col.name} (${col.type})</option>`).join('') +
+                        '</optgroup>';
+                }
+
+                // Add all columns
+                yAxisSelect.innerHTML += '<optgroup label="All Columns">' +
+                    data.columns.map(col => `<option value="${col.name}">${col.name} (${col.type})</option>`).join('') +
+                    '</optgroup>';
+
+            } catch (error) {
+                console.error('Failed to load columns:', error);
+                showToast('Failed to load columns: ' + error.message, 'error');
+            }
+        }
+
+        // Generate chart
+        async function generateChart() {
+            const table = document.getElementById('chartTable').value;
+            const xAxis = document.getElementById('chartXAxis').value;
+            const yAxis = document.getElementById('chartYAxis').value;
+            const aggregation = document.getElementById('chartAggregation').value;
+            const limit = document.getElementById('chartLimit').value;
+            const chartType = document.querySelector('input[name="chartType"]:checked').value;
+
+            // Validation
+            if (!table) {
+                showToast('Please select a table', 'error');
+                return;
+            }
+            if (!xAxis) {
+                showToast('Please select X-axis', 'error');
+                return;
+            }
+            if (!yAxis) {
+                showToast('Please select Y-axis', 'error');
+                return;
+            }
+
+            const generateBtn = document.getElementById('generateChartBtn');
+            generateBtn.disabled = true;
+            generateBtn.innerHTML = '<div class="loading"></div><span>Generating...</span>';
+
+            try {
+                const dbOrSchema = document.getElementById('databaseSelect').value;
+
+                // Build SQL query
+                let sql;
+                if (aggregation === 'COUNT') {
+                    sql = `SELECT ${xAxis}, COUNT(*) as value FROM ${table} GROUP BY ${xAxis} ORDER BY value DESC LIMIT ${limit}`;
+                } else {
+                    sql = `SELECT ${xAxis}, ${aggregation}(${yAxis}) as value FROM ${table} GROUP BY ${xAxis} ORDER BY value DESC LIMIT ${limit}`;
+                }
+
+                // Query data
+                const response = await fetch(`${apiBase}/query`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ sql: sql })
+                });
+
+                const data = await response.json();
+
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+
+                if (!data.rows || data.rows.length === 0) {
+                    throw new Error('No data returned from query');
+                }
+
+                // Transform data for Chart.js
+                const labels = data.rows.map(row => String(row[0]));
+                const values = data.rows.map(row => Number(row[1]) || 0);
+
+                // Render chart
+                renderChart(labels, values, chartType, {
+                    table: table,
+                    xAxis: xAxis,
+                    yAxis: yAxis,
+                    aggregation: aggregation
+                });
+
+                showToast('Chart generated successfully', 'success');
+            } catch (error) {
+                console.error('Failed to generate chart:', error);
+                showToast('Failed to generate chart: ' + error.message, 'error');
+            } finally {
+                generateBtn.disabled = false;
+                generateBtn.innerHTML = '<span>🎨 Generate Chart</span>';
+            }
+        }
+
+        // Render chart using Chart.js
+        function renderChart(labels, values, chartType, config) {
+            const canvas = document.getElementById('myChart');
+            const placeholder = document.querySelector('.chart-placeholder');
+            const isDarkMode = document.body.classList.contains('dark-mode');
+
+            // Show canvas, hide placeholder
+            canvas.style.display = 'block';
+            placeholder.style.display = 'none';
+
+            // Destroy existing chart if any
+            if (chartInstance) {
+                chartInstance.destroy();
+            }
+
+            // Color palette
+            const colors = [
+                'rgba(102, 126, 234, 0.8)',
+                'rgba(118, 75, 162, 0.8)',
+                'rgba(237, 100, 166, 0.8)',
+                'rgba(255, 159, 64, 0.8)',
+                'rgba(75, 192, 192, 0.8)',
+                'rgba(153, 102, 255, 0.8)',
+                'rgba(255, 205, 86, 0.8)',
+                'rgba(54, 162, 235, 0.8)',
+                'rgba(255, 99, 132, 0.8)',
+                'rgba(201, 203, 207, 0.8)'
+            ];
+
+            const borderColors = colors.map(c => c.replace('0.8', '1'));
+
+            // Chart configuration
+            const chartConfig = {
+                type: chartType,
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: `${config.aggregation}(${config.yAxis})`,
+                        data: values,
+                        backgroundColor: chartType === 'pie' || chartType === 'doughnut' ? colors : colors[0],
+                        borderColor: chartType === 'pie' || chartType === 'doughnut' ? borderColors : borderColors[0],
+                        borderWidth: 2
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    plugins: {
+                        legend: {
+                            display: chartType === 'pie' || chartType === 'doughnut',
+                            position: 'right',
+                            labels: {
+                                color: isDarkMode ? '#e0e0e0' : '#666',
+                                padding: 15,
+                                font: {
+                                    size: 12
+                                }
+                            }
+                        },
+                        title: {
+                            display: true,
+                            text: `${config.aggregation}(${config.yAxis}) by ${config.xAxis} - ${config.table}`,
+                            color: isDarkMode ? '#e0e0e0' : '#333',
+                            font: {
+                                size: 16,
+                                weight: 'bold'
+                            },
+                            padding: {
+                                top: 10,
+                                bottom: 20
+                            }
+                        },
+                        tooltip: {
+                            backgroundColor: isDarkMode ? '#2d2d2d' : 'rgba(0, 0, 0, 0.8)',
+                            titleColor: '#fff',
+                            bodyColor: '#fff',
+                            borderColor: isDarkMode ? '#505050' : '#999',
+                            borderWidth: 1
+                        }
+                    },
+                    scales: chartType === 'bar' || chartType === 'line' ? {
+                        x: {
+                            ticks: {
+                                color: isDarkMode ? '#999' : '#666'
+                            },
+                            grid: {
+                                color: isDarkMode ? '#404040' : '#e0e0e0'
+                            }
+                        },
+                        y: {
+                            beginAtZero: true,
+                            ticks: {
+                                color: isDarkMode ? '#999' : '#666'
+                            },
+                            grid: {
+                                color: isDarkMode ? '#404040' : '#e0e0e0'
+                            }
+                        }
+                    } : {}
+                }
+            };
+
+            // Create chart
+            const ctx = canvas.getContext('2d');
+            chartInstance = new Chart(ctx, chartConfig);
+        }
+
+        // Clear chart
+        function clearChart() {
+            const canvas = document.getElementById('myChart');
+            const placeholder = document.querySelector('.chart-placeholder');
+
+            // Hide canvas, show placeholder
+            canvas.style.display = 'none';
+            placeholder.style.display = 'flex';
+
+            // Destroy chart
+            if (chartInstance) {
+                chartInstance.destroy();
+                chartInstance = null;
+            }
+
+            // Reset form
+            document.getElementById('chartTable').value = '';
+            document.getElementById('chartXAxis').innerHTML = '<option value="">Select X-axis...</option>';
+            document.getElementById('chartYAxis').innerHTML = '<option value="">Select Y-axis...</option>';
+            document.getElementById('chartAggregation').value = 'COUNT';
+            document.getElementById('chartLimit').value = '20';
+            document.querySelector('input[name="chartType"][value="bar"]').checked = true;
+        }
 
         // Initialize on load
         init();
