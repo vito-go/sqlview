@@ -552,6 +552,14 @@
             white-space: nowrap;
         }
 
+        td.clickable-cell {
+            cursor: pointer;
+        }
+
+        td.clickable-cell:hover {
+            background: #e8f4fd;
+        }
+
         tbody tr:hover {
             background: #f9fafb;
         }
@@ -1891,8 +1899,18 @@
                         </div>
                         <div class="config-item">
                             <label>X-Axis (Category)</label>
-                            <select id="chartXAxis">
+                            <select id="chartXAxis" onchange="toggleTimeAggregation()">
                                 <option value="">Select X-axis...</option>
+                            </select>
+                        </div>
+                        <div class="config-item" id="timeAggregationContainer" style="display: none;">
+                            <label>Time Aggregation</label>
+                            <select id="chartTimeAggregation">
+                                <option value="none">None (Original Value)</option>
+                                <option value="day">By Day</option>
+                                <option value="week">By Week</option>
+                                <option value="month">By Month</option>
+                                <option value="year">By Year</option>
                             </select>
                         </div>
                         <div class="config-item">
@@ -2054,6 +2072,8 @@
         let sqlEditor = null;
         let chartInstance = null;
         let selectedSchemaTable = null;
+        let chartColumnsMetadata = {}; // Store column types for chart configuration
+        let dbDriver = null; // Store database driver type (postgres, mysql, sqlite3)
         const MAX_HISTORY_SIZE = 100;
         const HISTORY_STORAGE_KEY = 'sqlQueryHistory';
 
@@ -2095,6 +2115,9 @@
             try {
                 const response = await fetch(`${apiBase}/connection-info`);
                 const data = await response.json();
+
+                // Store driver type for database-specific SQL generation
+                dbDriver = data.driver;
 
                 const infoDiv = document.getElementById('connectionInfo');
                 infoDiv.innerHTML = `
@@ -2339,11 +2362,12 @@
             });
             html += '</tr></thead><tbody>';
 
-            data.rows.forEach(row => {
+            data.rows.forEach((row, rowIndex) => {
                 html += '<tr>';
-                row.forEach(cell => {
+                row.forEach((cell, cellIndex) => {
                     const value = cell === null ? '<i style="color: #999;">NULL</i>' : escapeHtml(String(cell));
-                    html += `<td title="${escapeHtml(String(cell))}">${value}</td>`;
+                    const cellClass = cell !== null ? 'clickable-cell' : '';
+                    html += `<td class="${cellClass}" title="${escapeHtml(String(cell))}" data-row="${rowIndex}" data-col="${cellIndex}">${value}</td>`;
                 });
                 html += '</tr>';
             });
@@ -2351,9 +2375,26 @@
             html += '</tbody></table>';
             container.innerHTML = html;
 
+            // Add click handlers to cells
+            container.querySelectorAll('td.clickable-cell').forEach(td => {
+                td.addEventListener('click', function() {
+                    const rowIndex = parseInt(this.dataset.row);
+                    const colIndex = parseInt(this.dataset.col);
+                    const cellValue = data.rows[rowIndex][colIndex];
+                    const columnName = data.columns[colIndex];
+                    showCellContentModal(columnName, cellValue);
+                });
+            });
+
             info.textContent = `${data.count} row${data.count !== 1 ? 's' : ''}`;
             exportBtn.style.display = 'flex';
             exportJsonBtn.style.display = 'flex';
+        }
+
+        // Show cell content in modal
+        function showCellContentModal(columnName, cellValue) {
+            const content = `<pre style="white-space: pre-wrap; word-break: break-all; margin: 0;">${escapeHtml(String(cellValue))}</pre>`;
+            showModal(`${columnName}`, content);
         }
 
         // Export to CSV
@@ -2876,6 +2917,8 @@
             if (!table) {
                 document.getElementById('chartXAxis').innerHTML = '<option value="">Select X-axis...</option>';
                 document.getElementById('chartYAxis').innerHTML = '<option value="">Select Y-axis...</option>';
+                document.getElementById('timeAggregationContainer').style.display = 'none';
+                chartColumnsMetadata = {};
                 return;
             }
 
@@ -2887,6 +2930,12 @@
                 if (data.error) {
                     throw new Error(data.error);
                 }
+
+                // Store column metadata
+                chartColumnsMetadata = {};
+                data.columns.forEach(col => {
+                    chartColumnsMetadata[col.name] = col.type;
+                });
 
                 // Populate X-axis (all columns)
                 const xAxisSelect = document.getElementById('chartXAxis');
@@ -2915,10 +2964,99 @@
                     data.columns.map(col => `<option value="${col.name}">${col.name} (${col.type})</option>`).join('') +
                     '</optgroup>';
 
+                // Hide time aggregation initially
+                document.getElementById('timeAggregationContainer').style.display = 'none';
+
             } catch (error) {
                 console.error('Failed to load columns:', error);
                 showToast('Failed to load columns: ' + error.message, 'error');
             }
+        }
+
+        // Toggle time aggregation visibility based on X-axis column type
+        function toggleTimeAggregation() {
+            const xAxis = document.getElementById('chartXAxis').value;
+            const container = document.getElementById('timeAggregationContainer');
+
+            if (!xAxis) {
+                container.style.display = 'none';
+                return;
+            }
+
+            const columnType = chartColumnsMetadata[xAxis];
+            if (!columnType) {
+                container.style.display = 'none';
+                return;
+            }
+
+            // Check if column is a date/time type
+            const timeTypes = ['DATE', 'TIME', 'DATETIME', 'TIMESTAMP', 'TIMESTAMPTZ'];
+            const isTimeColumn = timeTypes.some(type => columnType.toUpperCase().includes(type));
+
+            if (isTimeColumn) {
+                container.style.display = 'flex';
+                // Reset to default "By Day"
+                document.getElementById('chartTimeAggregation').value = 'day';
+            } else {
+                container.style.display = 'none';
+            }
+        }
+
+        // Get database-specific time aggregation SQL expression
+        function getTimeAggregationExpression(columnName, aggregationType) {
+            if (!dbDriver || aggregationType === 'none') {
+                return columnName;
+            }
+
+            // Normalize driver name
+            const driver = dbDriver.toLowerCase();
+
+            if (driver === 'postgres' || driver === 'postgresql' || driver === 'pgx') {
+                // PostgreSQL uses DATE_TRUNC
+                switch (aggregationType) {
+                    case 'day':
+                        return `DATE_TRUNC('day', ${columnName})::date`;
+                    case 'week':
+                        return `DATE_TRUNC('week', ${columnName})::date`;
+                    case 'month':
+                        return `DATE_TRUNC('month', ${columnName})::date`;
+                    case 'year':
+                        return `DATE_TRUNC('year', ${columnName})::date`;
+                    default:
+                        return columnName;
+                }
+            } else if (driver === 'mysql') {
+                // MySQL uses DATE_FORMAT and DATE
+                switch (aggregationType) {
+                    case 'day':
+                        return `DATE(${columnName})`;
+                    case 'week':
+                        return `DATE_FORMAT(${columnName}, '%Y-%u')`;
+                    case 'month':
+                        return `DATE_FORMAT(${columnName}, '%Y-%m')`;
+                    case 'year':
+                        return `YEAR(${columnName})`;
+                    default:
+                        return columnName;
+                }
+            } else if (driver === 'sqlite' || driver === 'sqlite3') {
+                // SQLite uses strftime
+                switch (aggregationType) {
+                    case 'day':
+                        return `DATE(${columnName})`;
+                    case 'week':
+                        return `strftime('%Y-%W', ${columnName})`;
+                    case 'month':
+                        return `strftime('%Y-%m', ${columnName})`;
+                    case 'year':
+                        return `strftime('%Y', ${columnName})`;
+                    default:
+                        return columnName;
+                }
+            }
+
+            // Fallback: try standard DATE() function
+            return aggregationType === 'day' ? `DATE(${columnName})` : columnName;
         }
 
         // Generate chart
@@ -2951,12 +3089,21 @@
             try {
                 const dbOrSchema = document.getElementById('databaseSelect').value;
 
+                // Check if time aggregation is enabled
+                const timeAggContainer = document.getElementById('timeAggregationContainer');
+                const timeAggregation = timeAggContainer.style.display !== 'none'
+                    ? document.getElementById('chartTimeAggregation').value
+                    : 'none';
+
+                // Get database-specific X-axis expression
+                const xAxisExpression = getTimeAggregationExpression(xAxis, timeAggregation);
+
                 // Build SQL query
                 let sql;
                 if (aggregation === 'COUNT') {
-                    sql = `SELECT ${xAxis}, COUNT(*) as value FROM ${table} GROUP BY ${xAxis} ORDER BY ${xAxis} ASC LIMIT ${limit}`;
+                    sql = `SELECT ${xAxisExpression} as xaxis, COUNT(*) as value FROM ${table} GROUP BY xaxis ORDER BY xaxis ASC LIMIT ${limit}`;
                 } else {
-                    sql = `SELECT ${xAxis}, ${aggregation}(${yAxis}) as value FROM ${table} GROUP BY ${xAxis} ORDER BY ${xAxis} ASC LIMIT ${limit}`;
+                    sql = `SELECT ${xAxisExpression} as xaxis, ${aggregation}(${yAxis}) as value FROM ${table} GROUP BY xaxis ORDER BY xaxis ASC LIMIT ${limit}`;
                 }
 
                 // Query data
@@ -2982,10 +3129,22 @@
                 const labels = data.rows.map(row => String(row[0]));
                 const values = data.rows.map(row => Number(row[1]) || 0);
 
+                // Build X-axis label
+                let xAxisLabel = xAxis;
+                if (timeAggregation !== 'none') {
+                    const timeAggLabels = {
+                        'day': 'Day',
+                        'week': 'Week',
+                        'month': 'Month',
+                        'year': 'Year'
+                    };
+                    xAxisLabel = `${xAxis} (by ${timeAggLabels[timeAggregation]})`;
+                }
+
                 // Render chart
                 renderChart(labels, values, chartType, {
                     table: table,
-                    xAxis: xAxis,
+                    xAxis: xAxisLabel,
                     yAxis: yAxis,
                     aggregation: aggregation
                 });
