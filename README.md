@@ -180,6 +180,7 @@ import (
 - 🔒 **Read-Only Mode** - Only SELECT and WITH queries allowed
 - 💾 **Export Results** - CSV and JSON formats
 - 🎨 **Comment Support** - Write comments with `--`, auto-filtered before execution
+- 🖱️ **Interactive Results Table** - Click any cell to view full content in popup with copy support
 
 ### Tab 2: Schema Explorer
 
@@ -197,6 +198,7 @@ import (
 - 📊 **Chart Types** - Bar, Line, Pie, Doughnut charts
 - 🎨 **Configurable Axes** - Select any column for X/Y axes
 - 📈 **Aggregations** - COUNT, SUM, AVG, MAX, MIN
+- 📅 **Time Aggregation** - Group date/time columns by Day, Week, Month, or Year (supports PostgreSQL, MySQL, SQLite)
 - 🎯 **Smart Recommendations** - Auto-detect numeric columns for Y-axis
 - 📉 **Data Limits** - Choose 10, 20, 50, or 100 records
 - 🌓 **Theme Aware** - Charts adapt to light/dark theme
