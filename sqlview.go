@@ -3,6 +3,8 @@ package sqlview
 import (
 	"database/sql"
 	"embed"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -607,9 +609,18 @@ func (dv *DBViewer) handleTableStats(w http.ResponseWriter, r *http.Request) {
 
 // QueryResult represents the result of a SQL query
 type QueryResult struct {
-	Columns []string        `json:"columns"`
-	Rows    [][]interface{} `json:"rows"`
-	Count   int             `json:"count"`
+	Columns     []string        `json:"columns"`
+	Rows        [][]interface{} `json:"rows"`
+	Count       int             `json:"count"`
+	ColumnTypes []ColumnType    `json:"columnTypes"` // Column type information for binary encoding
+}
+
+// ColumnType represents the type and encoding information for a column
+type ColumnType struct {
+	Name            string `json:"name"`            // Column name
+	Type            string `json:"type"`            // Database type (e.g., "bytea", "blob")
+	IsBinary        bool   `json:"isBinary"`        // Whether this column is binary type
+	DefaultEncoding string `json:"defaultEncoding"` // Default encoding: "hex", "base64", or "raw"
 }
 
 // executeQuery executes a SQL query and returns the result (uses default DB)
@@ -624,10 +635,42 @@ func executeQueryOnDB(db *sql.DB, query string) (*QueryResult, error) {
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
-
 	columns, err := rows.Columns()
 	if err != nil {
 		return nil, err
+	}
+
+	// Get column type information
+	columnTypes, err := rows.ColumnTypes()
+	if err != nil {
+		return nil, err
+	}
+
+	// Analyze column types to determine binary columns and default encoding
+	colTypeInfo := make([]ColumnType, len(columns))
+	for i, col := range columns {
+		colType := columnTypes[i]
+		dbTypeName := strings.ToLower(colType.DatabaseTypeName())
+
+		// Check if this is a binary type
+		isBinary := isBinaryType(dbTypeName)
+		defaultEncoding := "raw"
+
+		if isBinary {
+			// If column name contains "key", use hex; otherwise use base64
+			if strings.Contains(strings.ToLower(col), "key") {
+				defaultEncoding = "hex"
+			} else {
+				defaultEncoding = "base64"
+			}
+		}
+
+		colTypeInfo[i] = ColumnType{
+			Name:            col,
+			Type:            dbTypeName,
+			IsBinary:        isBinary,
+			DefaultEncoding: defaultEncoding,
+		}
 	}
 
 	var result [][]interface{}
@@ -643,11 +686,24 @@ func executeQueryOnDB(db *sql.DB, query string) (*QueryResult, error) {
 			return nil, err
 		}
 
-		// Convert byte slices to strings for JSON serialization
+		// Convert values based on column type
 		row := make([]interface{}, len(columns))
 		for i, v := range values {
 			if b, ok := v.([]byte); ok {
-				row[i] = string(b)
+				if colTypeInfo[i].IsBinary {
+					// Encode binary data based on default encoding
+					switch colTypeInfo[i].DefaultEncoding {
+					case "hex":
+						row[i] = hex.EncodeToString(b)
+					case "base64":
+						row[i] = base64.StdEncoding.EncodeToString(b)
+					default:
+						row[i] = string(b)
+					}
+				} else {
+					// For text types, convert to string
+					row[i] = string(b)
+				}
 			} else {
 				row[i] = v
 			}
@@ -660,10 +716,38 @@ func executeQueryOnDB(db *sql.DB, query string) (*QueryResult, error) {
 	}
 
 	return &QueryResult{
-		Columns: columns,
-		Rows:    result,
-		Count:   len(result),
+		Columns:     columns,
+		Rows:        result,
+		Count:       len(result),
+		ColumnTypes: colTypeInfo,
 	}, nil
+}
+
+// isBinaryType checks if a database type is a binary type
+func isBinaryType(typeName string) bool {
+	typeName = strings.ToLower(typeName)
+	binaryTypes := []string{
+		"bytea",         // PostgreSQL
+		"blob",          // SQLite, MySQL
+		"binary",        // MySQL
+		"varbinary",     // MySQL
+		"tinyblob",      // MySQL
+		"mediumblob",    // MySQL
+		"longblob",      // MySQL
+		"raw",           // Oracle (if ever supported)
+		"long raw",      // Oracle
+		"bfile",         // Oracle
+		"bit",           // SQL Server
+		"image",         // SQL Server
+		"varbinary(max)", // SQL Server
+	}
+
+	for _, bt := range binaryTypes {
+		if strings.Contains(typeName, bt) {
+			return true
+		}
+	}
+	return false
 }
 
 // getDB returns a database connection for the specified database

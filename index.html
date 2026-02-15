@@ -2334,6 +2334,88 @@
             }
         }
 
+        // Binary encoding utilities
+        function getEncodingPreference(database, table, column) {
+            const key = `encoding:${database}:${table}:${column}`;
+            return localStorage.getItem(key);
+        }
+
+        function setEncodingPreference(database, table, column, encoding) {
+            const key = `encoding:${database}:${table}:${column}`;
+            localStorage.setItem(key, encoding);
+        }
+
+        function reencodeData(originalData, fromEncoding, toEncoding) {
+            if (fromEncoding === toEncoding || !originalData) {
+                return originalData;
+            }
+
+            try {
+                let bytes;
+
+                // Decode from original encoding
+                if (fromEncoding === 'hex') {
+                    bytes = hexToBytes(originalData);
+                } else if (fromEncoding === 'base64') {
+                    bytes = base64ToBytes(originalData);
+                } else {
+                    // raw - assume it's already a string
+                    bytes = stringToBytes(originalData);
+                }
+
+                // Encode to target encoding
+                if (toEncoding === 'hex') {
+                    return bytesToHex(bytes);
+                } else if (toEncoding === 'base64') {
+                    return bytesToBase64(bytes);
+                } else {
+                    // raw
+                    return bytesToString(bytes);
+                }
+            } catch (e) {
+                console.error('Failed to reencode data:', e);
+                return originalData;
+            }
+        }
+
+        function hexToBytes(hex) {
+            const bytes = [];
+            for (let i = 0; i < hex.length; i += 2) {
+                bytes.push(parseInt(hex.substr(i, 2), 16));
+            }
+            return bytes;
+        }
+
+        function base64ToBytes(base64) {
+            const binaryString = atob(base64);
+            const bytes = new Uint8Array(binaryString.length);
+            for (let i = 0; i < binaryString.length; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+            }
+            return Array.from(bytes);
+        }
+
+        function stringToBytes(str) {
+            const bytes = [];
+            for (let i = 0; i < str.length; i++) {
+                bytes.push(str.charCodeAt(i));
+            }
+            return bytes;
+        }
+
+        function bytesToHex(bytes) {
+            return bytes.map(b => b.toString(16).padStart(2, '0')).join('');
+        }
+
+        function bytesToBase64(bytes) {
+            const binaryString = String.fromCharCode.apply(null, bytes);
+            return btoa(binaryString);
+        }
+
+        function bytesToString(bytes) {
+            return String.fromCharCode.apply(null, bytes);
+        }
+
         // Display results
         function displayResults(data) {
             currentResults = data;
@@ -2355,10 +2437,42 @@
                 return;
             }
 
+            // Get current database and table
+            const currentDB = document.getElementById('databaseSelect').value || 'public';
+            const currentTable = selectedTable || '';
+
+            // Initialize column encodings based on stored preferences or defaults
+            if (!data.columnEncodings) {
+                data.columnEncodings = {};
+            }
+
+            data.columns.forEach((col, idx) => {
+                const colType = data.columnTypes && data.columnTypes[idx];
+                if (colType && colType.isBinary) {
+                    const stored = getEncodingPreference(currentDB, currentTable, col);
+                    data.columnEncodings[col] = stored || colType.defaultEncoding;
+                }
+            });
+
             // Build table
             let html = '<table><thead><tr>';
-            data.columns.forEach(col => {
-                html += `<th>${escapeHtml(col)}</th>`;
+            data.columns.forEach((col, idx) => {
+                const colType = data.columnTypes && data.columnTypes[idx];
+                if (colType && colType.isBinary) {
+                    // Add encoding selector for binary columns
+                    const currentEncoding = data.columnEncodings[col] || colType.defaultEncoding;
+                    html += `<th>
+                        ${escapeHtml(col)}
+                        <br>
+                        <select class="encoding-selector" data-column="${escapeHtml(col)}" data-col-index="${idx}" style="font-size: 11px; margin-top: 4px; padding: 2px 4px;">
+                            <option value="raw" ${currentEncoding === 'raw' ? 'selected' : ''}>Raw</option>
+                            <option value="hex" ${currentEncoding === 'hex' ? 'selected' : ''}>Hex</option>
+                            <option value="base64" ${currentEncoding === 'base64' ? 'selected' : ''}>Base64</option>
+                        </select>
+                    </th>`;
+                } else {
+                    html += `<th>${escapeHtml(col)}</th>`;
+                }
             });
             html += '</tr></thead><tbody>';
 
@@ -2374,6 +2488,38 @@
 
             html += '</tbody></table>';
             container.innerHTML = html;
+
+            // Add encoding change handlers
+            container.querySelectorAll('select.encoding-selector').forEach(select => {
+                select.addEventListener('change', function(e) {
+                    e.stopPropagation();
+                    const column = this.dataset.column;
+                    const colIndex = parseInt(this.dataset.colIndex);
+                    const newEncoding = this.value;
+                    const colType = data.columnTypes[colIndex];
+                    const oldEncoding = data.columnEncodings[column] || colType.defaultEncoding;
+
+                    // Save preference
+                    setEncodingPreference(currentDB, currentTable, column, newEncoding);
+                    data.columnEncodings[column] = newEncoding;
+
+                    // Reencode data and update cells
+                    data.rows.forEach((row, rowIndex) => {
+                        const originalValue = row[colIndex];
+                        if (originalValue !== null) {
+                            const reencodedValue = reencodeData(originalValue, oldEncoding, newEncoding);
+                            row[colIndex] = reencodedValue;
+
+                            // Update cell display
+                            const cell = container.querySelector(`td[data-row="${rowIndex}"][data-col="${colIndex}"]`);
+                            if (cell) {
+                                cell.textContent = reencodedValue;
+                                cell.title = reencodedValue;
+                            }
+                        }
+                    });
+                });
+            });
 
             // Add click handlers to cells
             container.querySelectorAll('td.clickable-cell').forEach(td => {
