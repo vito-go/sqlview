@@ -311,14 +311,31 @@ func (p *postgresAdapter) GetTableDDL(db *sql.DB, dbName, tableName string) (str
 			return "", err
 		}
 
+		// Convert nextval('...') defaults to SERIAL/BIGSERIAL/SMALLSERIAL types
+		// so the generated DDL is self-contained and can be executed directly.
+		isSerial := false
+		if defaultVal.Valid && strings.HasPrefix(defaultVal.String, "nextval(") {
+			switch dataType {
+			case "integer":
+				dataType = "serial"
+				isSerial = true
+			case "bigint":
+				dataType = "bigserial"
+				isSerial = true
+			case "smallint":
+				dataType = "smallserial"
+				isSerial = true
+			}
+		}
+
 		colDef := fmt.Sprintf("  %s %s", colName, dataType)
-		if maxLen.Valid {
+		if !isSerial && maxLen.Valid {
 			colDef += fmt.Sprintf("(%d)", maxLen.Int64)
 		}
-		if nullable.String == "NO" {
+		if !isSerial && nullable.String == "NO" {
 			colDef += " NOT NULL"
 		}
-		if defaultVal.Valid && defaultVal.String != "" {
+		if !isSerial && defaultVal.Valid && defaultVal.String != "" {
 			colDef += fmt.Sprintf(" DEFAULT %s", defaultVal.String)
 		}
 		colDefs = append(colDefs, colDef)
