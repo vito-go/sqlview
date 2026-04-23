@@ -152,4 +152,52 @@ func TestSQLite_PRAGMACommands(t *testing.T) {
 
 		t.Logf("Successfully handled table: %s", tableName)
 	})
+
+	// Test GetAutoIncrementColumns: INTEGER PRIMARY KEY is a rowid alias
+	t.Run("GetAutoIncrementColumns", func(t *testing.T) {
+		cols, err := adapter.GetAutoIncrementColumns(db, "main", "users")
+		if err != nil {
+			t.Fatalf("GetAutoIncrementColumns failed: %v", err)
+		}
+		if len(cols) != 1 || cols[0] != "id" {
+			t.Errorf("Expected [id], got %v", cols)
+		}
+	})
+
+	// Verify ordering prefers a non-id auto-increment column over a plain id
+	t.Run("BuildTableDataQueryWithOrder_AutoIncBeforeId", func(t *testing.T) {
+		if _, err := db.Exec(`
+			CREATE TABLE events (
+				id TEXT,
+				seq INTEGER PRIMARY KEY,
+				payload TEXT
+			)
+		`); err != nil {
+			t.Fatalf("Failed to create events table: %v", err)
+		}
+
+		columns, err := adapter.GetTableColumns(db, "main", "events")
+		if err != nil {
+			t.Fatalf("GetTableColumns failed: %v", err)
+		}
+		autoInc, err := adapter.GetAutoIncrementColumns(db, "main", "events")
+		if err != nil {
+			t.Fatalf("GetAutoIncrementColumns failed: %v", err)
+		}
+
+		query := adapter.BuildTableDataQueryWithOrder("main", "events", columns, autoInc, 10)
+		// seq (auto-increment) should be chosen, not id (plain text column)
+		if want := "ORDER BY seq DESC"; !contains(query, want) {
+			t.Errorf("Expected query to contain %q, got: %s", want, query)
+		}
+	})
+}
+
+func contains(s, sub string) bool {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
 }

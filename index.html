@@ -1315,21 +1315,22 @@
         /* Chart Display Area */
         .chart-display {
             flex: 1;
+            min-height: 0;
             overflow: auto;
-            padding: 20px;
+            padding: 16px;
             display: flex;
-            align-items: center;
+            align-items: stretch;
             justify-content: center;
         }
 
         .chart-container {
             width: 100%;
-            max-width: 1200px;
+            max-width: 100%;
             height: 100%;
-            max-height: 600px;
+            min-height: 420px;
             background: white;
             border-radius: 8px;
-            padding: 20px;
+            padding: 16px;
             box-shadow: 0 2px 8px rgba(0,0,0,0.1);
             position: relative;
         }
@@ -1889,7 +1890,6 @@
             <div class="tab-pane" id="tab-charts">
                 <!-- Chart Configuration Panel -->
                 <div class="chart-config">
-                    <h3>📊 Chart Configuration</h3>
                     <div class="config-grid">
                         <div class="config-item">
                             <label>Table</label>
@@ -1913,6 +1913,15 @@
                                 <option value="year">By Year</option>
                             </select>
                         </div>
+                        <div class="config-item" id="tsUnitContainer" style="display: none;">
+                            <label>Timestamp Unit</label>
+                            <select id="chartTsUnit">
+                                <option value="s">Seconds</option>
+                                <option value="ms" selected>Milliseconds</option>
+                                <option value="us">Microseconds</option>
+                                <option value="ns">Nanoseconds</option>
+                            </select>
+                        </div>
                         <div class="config-item">
                             <label>Y-Axis (Value)</label>
                             <select id="chartYAxis">
@@ -1929,15 +1938,20 @@
                                 <option value="MIN">MIN - Minimum value</option>
                             </select>
                         </div>
-                        <div class="config-item">
-                            <label>Limit</label>
-                            <select id="chartLimit">
-                                <option value="10">10 records</option>
-                                <option value="20" selected>20 records</option>
-                                <option value="50">50 records</option>
-                                <option value="100">100 records</option>
-                            </select>
-                        </div>
+                    </div>
+                    <div class="config-item" style="margin-bottom: 12px;">
+                        <label for="chartWhereClause">Filter (WHERE clause) <span style="color: #888; font-weight: normal; font-size: 11px;">— optional; condition only, no ; or comments</span></label>
+                        <input type="text" id="chartWhereClause"
+                            placeholder="e.g. status = 'active' AND created_at > '2024-01-01'"
+                            style="width: 100%; padding: 4px 8px; font-family: monospace; font-size: 13px; box-sizing: border-box;"
+                            spellcheck="false" autocomplete="off">
+                        <div id="chartWhereError" style="display: none; color: #c0392b; font-size: 12px; margin-top: 4px;"></div>
+                    </div>
+                    <div class="config-item" style="margin-bottom: 16px;">
+                        <details>
+                            <summary style="cursor: pointer; color: #666; font-size: 12px;">Generated SQL preview</summary>
+                            <pre id="chartSqlPreview" style="margin-top: 6px; padding: 8px 10px; background: rgba(127,127,127,0.08); border-radius: 4px; font-size: 12px; white-space: pre-wrap; word-break: break-all; overflow-x: auto;"></pre>
+                        </details>
                     </div>
                     <div class="config-item" style="margin-bottom: 16px;">
                         <label>Chart Type</label>
@@ -2087,6 +2101,7 @@
             await loadTables();
             await initChartTables();
             await initSchemaExplorer();
+            initChartWhereBindings();
         }
 
         // Initialize CodeMirror for SQL syntax highlighting
@@ -2416,6 +2431,128 @@
             return String.fromCharCode.apply(null, bytes);
         }
 
+        // -------- Integer timestamp detection & formatting --------
+
+        // Widely-matching name test. Catches created_at / update_time / ts / event_ts / ts_end /
+        // epoch_ms / startTime etc., while avoiding common false positives like
+        // "status" / "toasts" / "guests" (which merely contain the letters "ts").
+        function isTimestampColumnName(name) {
+            if (!name) return false;
+            const lower = String(name).toLowerCase();
+            if (lower === 'ts') return true;
+            if (lower.endsWith('_at')) return true;
+            if (lower.includes('time') || lower.includes('epoch')) return true;
+            if (lower.startsWith('ts_') || lower.endsWith('_ts') || lower.includes('_ts_')) return true;
+            return false;
+        }
+
+        // Matches integer-ish DB types across postgres / mysql / sqlite, with the
+        // optional " unsigned" suffix MySQL reports.
+        function isIntegerDbType(type) {
+            if (!type) return false;
+            const t = String(type).toLowerCase().trim().replace(/\s+unsigned$/, '');
+            switch (t) {
+                case 'int':
+                case 'integer':
+                case 'int2':
+                case 'int4':
+                case 'int8':
+                case 'smallint':
+                case 'mediumint':
+                case 'bigint':
+                case 'tinyint':
+                case 'serial':
+                case 'bigserial':
+                case 'smallserial':
+                    return true;
+            }
+            return false;
+        }
+
+        function isTimestampColumn(name, type) {
+            return isIntegerDbType(type) && isTimestampColumnName(name);
+        }
+
+        // Infer unit by magnitude. Picks the coarsest unit whose epoch value stays
+        // within a plausible real-world range, so bigint ns timestamps don't get
+        // rendered as years in the future.
+        function inferTimestampUnit(value) {
+            const n = Number(value);
+            if (!Number.isFinite(n)) return 'ms';
+            const abs = Math.abs(n);
+            if (abs < 1e11) return 's';
+            if (abs < 1e14) return 'ms';
+            if (abs < 1e17) return 'us';
+            return 'ns';
+        }
+
+        function timestampToDate(value, unit) {
+            const n = Number(value);
+            if (!Number.isFinite(n)) return null;
+            let ms;
+            switch (unit) {
+                case 's': ms = n * 1000; break;
+                case 'us': ms = n / 1000; break;
+                case 'ns': ms = n / 1e6; break;
+                case 'ms':
+                default: ms = n;
+            }
+            const d = new Date(ms);
+            return isNaN(d.getTime()) ? null : d;
+        }
+
+        function pad2(n) { return String(n).padStart(2, '0'); }
+
+        function formatLocalDateTime(d) {
+            return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()) + ' ' +
+                pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds());
+        }
+
+        function formatRelative(d) {
+            const diffMs = d.getTime() - Date.now();
+            const past = diffMs < 0;
+            const abs = Math.abs(diffMs);
+            const units = [
+                ['year', 365 * 24 * 3600 * 1000],
+                ['month', 30 * 24 * 3600 * 1000],
+                ['day', 24 * 3600 * 1000],
+                ['hour', 3600 * 1000],
+                ['minute', 60 * 1000],
+                ['second', 1000],
+            ];
+            for (const [label, size] of units) {
+                if (abs >= size) {
+                    const n = Math.floor(abs / size);
+                    const plural = n === 1 ? '' : 's';
+                    return past ? `${n} ${label}${plural} ago` : `in ${n} ${label}${plural}`;
+                }
+            }
+            return past ? 'just now' : 'in a moment';
+        }
+
+        function formatTimestamp(raw, unit, format) {
+            if (raw === null || raw === undefined || raw === '') return '';
+            if (format === 'raw') return String(raw);
+            const d = timestampToDate(raw, unit);
+            if (!d) return String(raw);
+            switch (format) {
+                case 'iso': return d.toISOString();
+                case 'relative': return formatRelative(d);
+                case 'time':
+                default: return formatLocalDateTime(d);
+            }
+        }
+
+        function getTimestampFormatPreference(database, table, column) {
+            const key = `tsformat:${database}:${table}:${column}`;
+            return localStorage.getItem(key);
+        }
+
+        function setTimestampFormatPreference(database, table, column, format) {
+            const key = `tsformat:${database}:${table}:${column}`;
+            localStorage.setItem(key, format);
+        }
+
         // Display results
         function displayResults(data) {
             currentResults = data;
@@ -2454,6 +2591,47 @@
                 }
             });
 
+            // Detect integer timestamp columns, infer unit per column from first
+            // non-null value, and replace row cell with formatted value (keeping
+            // the raw integer in data.columnRawValues so we can reformat on demand).
+            if (!data.columnTsUnits) data.columnTsUnits = {};
+            if (!data.columnTsFormats) data.columnTsFormats = {};
+            if (!data.columnRawValues) data.columnRawValues = {};
+            const tsColumnIndex = {};
+            data.columns.forEach((col, idx) => {
+                const colType = data.columnTypes && data.columnTypes[idx];
+                const typeName = colType ? colType.type : '';
+                if (!isTimestampColumn(col, typeName)) return;
+
+                tsColumnIndex[idx] = col;
+                // Infer unit from the largest absolute magnitude in the column,
+                // not the first non-null value. Sentinel zeros or small dummy
+                // values are common (e.g. "not delivered yet") and would
+                // otherwise mis-scale the whole column to seconds.
+                let maxAbs = 0;
+                for (const row of data.rows) {
+                    const v = row[idx];
+                    if (v === null || v === undefined || v === '') continue;
+                    const n = Math.abs(Number(v));
+                    if (Number.isFinite(n) && n > maxAbs) maxAbs = n;
+                }
+                const unit = maxAbs > 0 ? inferTimestampUnit(maxAbs) : 'ms';
+                data.columnTsUnits[col] = unit;
+
+                const stored = getTimestampFormatPreference(currentDB, currentTable, col);
+                const format = stored || 'time';
+                data.columnTsFormats[col] = format;
+
+                const rawCol = data.rows.map(row => row[idx]);
+                data.columnRawValues[col] = rawCol;
+                data.rows.forEach((row, rowIndex) => {
+                    const raw = rawCol[rowIndex];
+                    if (raw !== null && raw !== undefined && raw !== '') {
+                        row[idx] = formatTimestamp(raw, unit, format);
+                    }
+                });
+            });
+
             // Build table
             let html = '<table><thead><tr>';
             data.columns.forEach((col, idx) => {
@@ -2468,6 +2646,19 @@
                             <option value="raw" ${currentEncoding === 'raw' ? 'selected' : ''}>Raw</option>
                             <option value="hex" ${currentEncoding === 'hex' ? 'selected' : ''}>Hex</option>
                             <option value="base64" ${currentEncoding === 'base64' ? 'selected' : ''}>Base64</option>
+                        </select>
+                    </th>`;
+                } else if (tsColumnIndex[idx] !== undefined) {
+                    const currentFormat = data.columnTsFormats[col];
+                    const unitLabel = data.columnTsUnits[col];
+                    html += `<th>
+                        ${escapeHtml(col)} <span style="color: #999; font-weight: normal; font-size: 10px;">(${unitLabel})</span>
+                        <br>
+                        <select class="ts-format-selector" data-column="${escapeHtml(col)}" data-col-index="${idx}" style="font-size: 11px; margin-top: 4px; padding: 2px 4px;">
+                            <option value="time" ${currentFormat === 'time' ? 'selected' : ''}>Time</option>
+                            <option value="relative" ${currentFormat === 'relative' ? 'selected' : ''}>Relative</option>
+                            <option value="iso" ${currentFormat === 'iso' ? 'selected' : ''}>ISO</option>
+                            <option value="raw" ${currentFormat === 'raw' ? 'selected' : ''}>Raw</option>
                         </select>
                     </th>`;
                 } else {
@@ -2516,6 +2707,33 @@
                                 cell.textContent = reencodedValue;
                                 cell.title = reencodedValue;
                             }
+                        }
+                    });
+                });
+            });
+
+            // Timestamp-format change handlers
+            container.querySelectorAll('select.ts-format-selector').forEach(select => {
+                select.addEventListener('change', function(e) {
+                    e.stopPropagation();
+                    const column = this.dataset.column;
+                    const colIndex = parseInt(this.dataset.colIndex);
+                    const newFormat = this.value;
+                    const unit = data.columnTsUnits[column];
+                    const rawCol = data.columnRawValues[column] || [];
+
+                    setTimestampFormatPreference(currentDB, currentTable, column, newFormat);
+                    data.columnTsFormats[column] = newFormat;
+
+                    data.rows.forEach((row, rowIndex) => {
+                        const raw = rawCol[rowIndex];
+                        if (raw === null || raw === undefined || raw === '') return;
+                        const formatted = formatTimestamp(raw, unit, newFormat);
+                        row[colIndex] = formatted;
+                        const cell = container.querySelector(`td[data-row="${rowIndex}"][data-col="${colIndex}"]`);
+                        if (cell) {
+                            cell.textContent = formatted;
+                            cell.title = formatted;
                         }
                     });
                 });
@@ -3102,11 +3320,17 @@
         // Load columns for selected table
         async function loadChartColumns() {
             const table = document.getElementById('chartTable').value;
+            // Clear WHERE on table switch so filter expressions from a prior
+            // table don't silently apply (and error out) on the new one.
+            const whereEl = document.getElementById('chartWhereClause');
+            if (whereEl) whereEl.value = '';
             if (!table) {
                 document.getElementById('chartXAxis').innerHTML = '<option value="">Select X-axis...</option>';
                 document.getElementById('chartYAxis').innerHTML = '<option value="">Select Y-axis...</option>';
                 document.getElementById('timeAggregationContainer').style.display = 'none';
+                document.getElementById('tsUnitContainer').style.display = 'none';
                 chartColumnsMetadata = {};
+                if (typeof updateChartSqlPreview === 'function') updateChartSqlPreview();
                 return;
             }
 
@@ -3154,121 +3378,266 @@
 
                 // Hide time aggregation initially
                 document.getElementById('timeAggregationContainer').style.display = 'none';
+                document.getElementById('tsUnitContainer').style.display = 'none';
 
+                if (typeof updateChartSqlPreview === 'function') updateChartSqlPreview();
             } catch (error) {
                 console.error('Failed to load columns:', error);
                 showToast('Failed to load columns: ' + error.message, 'error');
             }
         }
 
-        // Toggle time aggregation visibility based on X-axis column type
+        // Toggle time aggregation visibility based on X-axis column type.
+        // Activates for native date/time columns, and also for integer columns
+        // whose name looks like a timestamp (see isTimestampColumn).
         function toggleTimeAggregation() {
             const xAxis = document.getElementById('chartXAxis').value;
             const container = document.getElementById('timeAggregationContainer');
+            const unitContainer = document.getElementById('tsUnitContainer');
 
             if (!xAxis) {
                 container.style.display = 'none';
+                unitContainer.style.display = 'none';
                 return;
             }
 
             const columnType = chartColumnsMetadata[xAxis];
             if (!columnType) {
                 container.style.display = 'none';
+                unitContainer.style.display = 'none';
                 return;
             }
 
-            // Check if column is a date/time type
             const timeTypes = ['DATE', 'TIME', 'DATETIME', 'TIMESTAMP', 'TIMESTAMPTZ'];
-            const isTimeColumn = timeTypes.some(type => columnType.toUpperCase().includes(type));
+            const isNativeTime = timeTypes.some(type => columnType.toUpperCase().includes(type));
+            const isIntegerTs = isTimestampColumn(xAxis, columnType);
 
-            if (isTimeColumn) {
+            if (isNativeTime || isIntegerTs) {
                 container.style.display = 'flex';
-                // Reset to default "By Day"
                 document.getElementById('chartTimeAggregation').value = 'day';
+                unitContainer.style.display = isIntegerTs ? 'flex' : 'none';
             } else {
                 container.style.display = 'none';
+                unitContainer.style.display = 'none';
             }
+            if (typeof updateChartSqlPreview === 'function') updateChartSqlPreview();
         }
 
-        // Get database-specific time aggregation SQL expression
+        // Wrap an integer timestamp column with a per-driver int→timestamp
+        // conversion, dividing by the right factor so the underlying epoch is
+        // always in seconds for the driver's conversion function.
+        function wrapIntTimestamp(columnName, unit) {
+            const divisorForSeconds = { s: 1, ms: 1000, us: 1000000, ns: 1000000000 }[unit] || 1000;
+            const driver = (dbDriver || '').toLowerCase();
+            if (driver === 'postgres' || driver === 'postgresql' || driver === 'pgx') {
+                return divisorForSeconds === 1
+                    ? `to_timestamp(${columnName})`
+                    : `to_timestamp(${columnName}::double precision / ${divisorForSeconds})`;
+            }
+            if (driver === 'mysql') {
+                return divisorForSeconds === 1
+                    ? `FROM_UNIXTIME(${columnName})`
+                    : `FROM_UNIXTIME(${columnName} / ${divisorForSeconds})`;
+            }
+            if (driver === 'sqlite' || driver === 'sqlite3') {
+                return divisorForSeconds === 1
+                    ? `datetime(${columnName}, 'unixepoch')`
+                    : `datetime(${columnName} / ${divisorForSeconds}, 'unixepoch')`;
+            }
+            return columnName;
+        }
+
+        // Get database-specific time aggregation SQL expression.
+        // When the column is an integer timestamp, it is first converted to a
+        // native timestamp using the selected unit, then aggregated.
         function getTimeAggregationExpression(columnName, aggregationType) {
             if (!dbDriver || aggregationType === 'none') {
                 return columnName;
             }
 
-            // Normalize driver name
+            const columnType = chartColumnsMetadata[columnName];
+            let expr = columnName;
+            if (isTimestampColumn(columnName, columnType)) {
+                const unit = document.getElementById('chartTsUnit').value || 'ms';
+                expr = wrapIntTimestamp(columnName, unit);
+            }
+
             const driver = dbDriver.toLowerCase();
 
             if (driver === 'postgres' || driver === 'postgresql' || driver === 'pgx') {
-                // PostgreSQL uses DATE_TRUNC
                 switch (aggregationType) {
                     case 'day':
-                        return `DATE_TRUNC('day', ${columnName})::date`;
+                        return `DATE_TRUNC('day', ${expr})::date`;
                     case 'week':
-                        return `DATE_TRUNC('week', ${columnName})::date`;
+                        return `DATE_TRUNC('week', ${expr})::date`;
                     case 'month':
-                        return `DATE_TRUNC('month', ${columnName})::date`;
+                        return `DATE_TRUNC('month', ${expr})::date`;
                     case 'year':
-                        return `DATE_TRUNC('year', ${columnName})::date`;
+                        return `DATE_TRUNC('year', ${expr})::date`;
                     default:
-                        return columnName;
+                        return expr;
                 }
             } else if (driver === 'mysql') {
-                // MySQL uses DATE_FORMAT and DATE
                 switch (aggregationType) {
                     case 'day':
-                        return `DATE(${columnName})`;
+                        return `DATE(${expr})`;
                     case 'week':
-                        return `DATE_FORMAT(${columnName}, '%Y-%u')`;
+                        return `DATE_FORMAT(${expr}, '%Y-%u')`;
                     case 'month':
-                        return `DATE_FORMAT(${columnName}, '%Y-%m')`;
+                        return `DATE_FORMAT(${expr}, '%Y-%m')`;
                     case 'year':
-                        return `YEAR(${columnName})`;
+                        return `YEAR(${expr})`;
                     default:
-                        return columnName;
+                        return expr;
                 }
             } else if (driver === 'sqlite' || driver === 'sqlite3') {
-                // SQLite uses strftime
                 switch (aggregationType) {
                     case 'day':
-                        return `DATE(${columnName})`;
+                        return `DATE(${expr})`;
                     case 'week':
-                        return `strftime('%Y-%W', ${columnName})`;
+                        return `strftime('%Y-%W', ${expr})`;
                     case 'month':
-                        return `strftime('%Y-%m', ${columnName})`;
+                        return `strftime('%Y-%m', ${expr})`;
                     case 'year':
-                        return `strftime('%Y', ${columnName})`;
+                        return `strftime('%Y', ${expr})`;
                     default:
-                        return columnName;
+                        return expr;
                 }
             }
 
-            // Fallback: try standard DATE() function
-            return aggregationType === 'day' ? `DATE(${columnName})` : columnName;
+            return aggregationType === 'day' ? `DATE(${expr})` : expr;
         }
 
-        // Generate chart
-        async function generateChart() {
+        // Validate a user-supplied WHERE clause body (without the WHERE keyword).
+        //
+        // This is defense-in-depth on top of the server's SELECT/WITH-only guard.
+        // The goal is to keep the textarea behaving as a *filter condition* and
+        // not a way to smuggle comments, stacked statements, or unbalanced
+        // parenthesized UNIONs.
+        //
+        // Rules:
+        //   - No semicolons (blocks stacked statements).
+        //   - No SQL comments (`--`, `#` line comments, `/* ... */` block comments).
+        //   - Balanced parentheses.
+        //   - Balanced single-quoted strings (respecting the `''` doubled-quote
+        //     escape). Inside a string literal, semicolons/parens/comment
+        //     sequences are allowed (they are just data).
+        function validateWhereClause(input) {
+            const text = String(input || '').trim();
+            if (!text) return { ok: true, normalized: '' };
+
+            let parenDepth = 0;
+            let inString = false;
+            for (let i = 0; i < text.length; i++) {
+                const ch = text[i];
+                const next = text[i + 1];
+
+                if (inString) {
+                    if (ch === "'") {
+                        if (next === "'") { i++; continue; } // escaped ''
+                        inString = false;
+                    }
+                    continue;
+                }
+
+                if (ch === "'") { inString = true; continue; }
+                if (ch === ';') return { ok: false, reason: 'Semicolons are not allowed' };
+                if (ch === '-' && next === '-') return { ok: false, reason: 'SQL comments (--) are not allowed' };
+                if (ch === '#') return { ok: false, reason: 'SQL comments (#) are not allowed' };
+                if (ch === '/' && next === '*') return { ok: false, reason: 'Block comments (/* ... */) are not allowed' };
+                if (ch === '(') parenDepth++;
+                if (ch === ')') {
+                    parenDepth--;
+                    if (parenDepth < 0) return { ok: false, reason: 'Unbalanced parentheses' };
+                }
+            }
+            if (inString) return { ok: false, reason: "Unterminated string literal (missing closing ')" };
+            if (parenDepth !== 0) return { ok: false, reason: 'Unbalanced parentheses' };
+            return { ok: true, normalized: text };
+        }
+
+        // Build the chart SQL from the current form state. Returns
+        // { ok, sql, error } — missing required selections or a bad WHERE
+        // surface as ok:false with an explanatory error string.
+        function buildChartSQL() {
             const table = document.getElementById('chartTable').value;
             const xAxis = document.getElementById('chartXAxis').value;
             const yAxis = document.getElementById('chartYAxis').value;
             const aggregation = document.getElementById('chartAggregation').value;
-            const limit = document.getElementById('chartLimit').value;
-            const chartType = document.querySelector('input[name="chartType"]:checked').value;
 
-            // Validation
-            if (!table) {
-                showToast('Please select a table', 'error');
+            if (!table) return { ok: false, sql: '', error: 'Select a table' };
+            if (!xAxis) return { ok: false, sql: '', error: 'Select an X-axis' };
+            if (aggregation !== 'COUNT' && !yAxis) {
+                return { ok: false, sql: '', error: 'Select a Y-axis' };
+            }
+
+            const timeAggContainer = document.getElementById('timeAggregationContainer');
+            const timeAggregation = timeAggContainer.style.display !== 'none'
+                ? document.getElementById('chartTimeAggregation').value
+                : 'none';
+            const xAxisExpression = getTimeAggregationExpression(xAxis, timeAggregation);
+
+            const whereRaw = document.getElementById('chartWhereClause').value;
+            const whereCheck = validateWhereClause(whereRaw);
+            if (!whereCheck.ok) return { ok: false, sql: '', error: 'WHERE: ' + whereCheck.reason };
+            const whereSQL = whereCheck.normalized ? ` WHERE (${whereCheck.normalized})` : '';
+
+            const selectValue = aggregation === 'COUNT'
+                ? 'COUNT(*) as value'
+                : `${aggregation}(${yAxis}) as value`;
+            const sql = `SELECT ${xAxisExpression} as xaxis, ${selectValue} FROM ${table}${whereSQL} GROUP BY xaxis ORDER BY xaxis ASC`;
+            return { ok: true, sql, error: '' };
+        }
+
+        // Update inline WHERE error + Generated SQL preview based on current form.
+        function updateChartSqlPreview() {
+            const whereRaw = document.getElementById('chartWhereClause').value;
+            const whereCheck = validateWhereClause(whereRaw);
+            const errEl = document.getElementById('chartWhereError');
+            if (!whereCheck.ok) {
+                errEl.textContent = whereCheck.reason;
+                errEl.style.display = 'block';
+            } else {
+                errEl.textContent = '';
+                errEl.style.display = 'none';
+            }
+
+            const preview = document.getElementById('chartSqlPreview');
+            if (!preview) return;
+            const built = buildChartSQL();
+            preview.textContent = built.ok ? built.sql : `-- ${built.error}`;
+        }
+
+        function initChartWhereBindings() {
+            const ids = ['chartTable', 'chartXAxis', 'chartYAxis', 'chartAggregation',
+                'chartTimeAggregation', 'chartTsUnit'];
+            ids.forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.addEventListener('change', updateChartSqlPreview);
+            });
+            const whereEl = document.getElementById('chartWhereClause');
+            if (whereEl) whereEl.addEventListener('input', updateChartSqlPreview);
+            updateChartSqlPreview();
+        }
+
+        // Generate chart
+        async function generateChart() {
+            const chartType = document.querySelector('input[name="chartType"]:checked').value;
+            const built = buildChartSQL();
+            if (!built.ok) {
+                showToast(built.error, 'error');
                 return;
             }
-            if (!xAxis) {
-                showToast('Please select X-axis', 'error');
-                return;
-            }
-            if (!yAxis) {
-                showToast('Please select Y-axis', 'error');
-                return;
-            }
+            const sql = built.sql;
+
+            const table = document.getElementById('chartTable').value;
+            const xAxis = document.getElementById('chartXAxis').value;
+            const yAxis = document.getElementById('chartYAxis').value;
+            const aggregation = document.getElementById('chartAggregation').value;
+            const timeAggContainer = document.getElementById('timeAggregationContainer');
+            const timeAggregation = timeAggContainer.style.display !== 'none'
+                ? document.getElementById('chartTimeAggregation').value
+                : 'none';
 
             const generateBtn = document.getElementById('generateChartBtn');
             generateBtn.disabled = true;
@@ -3276,23 +3645,6 @@
 
             try {
                 const dbOrSchema = document.getElementById('databaseSelect').value;
-
-                // Check if time aggregation is enabled
-                const timeAggContainer = document.getElementById('timeAggregationContainer');
-                const timeAggregation = timeAggContainer.style.display !== 'none'
-                    ? document.getElementById('chartTimeAggregation').value
-                    : 'none';
-
-                // Get database-specific X-axis expression
-                const xAxisExpression = getTimeAggregationExpression(xAxis, timeAggregation);
-
-                // Build SQL query
-                let sql;
-                if (aggregation === 'COUNT') {
-                    sql = `SELECT ${xAxisExpression} as xaxis, COUNT(*) as value FROM ${table} GROUP BY xaxis ORDER BY xaxis ASC LIMIT ${limit}`;
-                } else {
-                    sql = `SELECT ${xAxisExpression} as xaxis, ${aggregation}(${yAxis}) as value FROM ${table} GROUP BY xaxis ORDER BY xaxis ASC LIMIT ${limit}`;
-                }
 
                 // Query data
                 const response = await fetch(`${apiBase}/query`, {
@@ -3393,7 +3745,7 @@
                 },
                 options: {
                     responsive: true,
-                    maintainAspectRatio: true,
+                    maintainAspectRatio: false,
                     plugins: {
                         legend: {
                             display: chartType === 'pie' || chartType === 'doughnut',
@@ -3474,8 +3826,9 @@
             document.getElementById('chartXAxis').innerHTML = '<option value="">Select X-axis...</option>';
             document.getElementById('chartYAxis').innerHTML = '<option value="">Select Y-axis...</option>';
             document.getElementById('chartAggregation').value = 'COUNT';
-            document.getElementById('chartLimit').value = '20';
+            document.getElementById('chartWhereClause').value = '';
             document.querySelector('input[name="chartType"][value="bar"]').checked = true;
+            if (typeof updateChartSqlPreview === 'function') updateChartSqlPreview();
         }
 
         // ===== Schema Explorer Functions =====

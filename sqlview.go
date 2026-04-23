@@ -381,8 +381,12 @@ func (dv *DBViewer) handleTableData(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Build query with smart ordering (prioritizes id, updated_at, update_time, etc. DESC)
-	query := dv.adapter.BuildTableDataQueryWithOrder(dbOrSchema, tableName, columns, limit)
+	// Best-effort: if auto-increment detection fails, fall through with nil so
+	// ordering degrades to the legacy (time columns / id) behavior.
+	autoIncCols, _ := dv.adapter.GetAutoIncrementColumns(db, dbOrSchema, tableName)
+
+	// Build query with smart ordering (time columns > auto-increment > id, all DESC)
+	query := dv.adapter.BuildTableDataQueryWithOrder(dbOrSchema, tableName, columns, autoIncCols, limit)
 
 	// Execute query using the selected DB connection
 	result, err := executeQueryOnDB(db, query)

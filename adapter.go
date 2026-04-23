@@ -19,17 +19,22 @@ import (
 	//   _ "modernc.org/sqlite"               // Pure Go (no CGO)
 )
 
-// buildSmartOrderBy generates ORDER BY clause based on available columns
-// Priority order: id DESC, updated_at DESC, update_time DESC, created_at DESC, create_time DESC
-func buildSmartOrderBy(columns []string) string {
+// buildSmartOrderBy generates an ORDER BY clause based on available columns.
+//
+// Priority (highest first):
+//  1. updated_at / update_time / updated_time / updatetime
+//  2. created_at / create_time / created_time / createtime
+//  3. any auto-increment column (ranked above a plain "id" column so tables
+//     whose auto-increment PK is not literally named "id" still order sensibly)
+//  4. id
+func buildSmartOrderBy(columns []string, autoIncrementColumns []string) string {
 	// Create a map for quick lookup (case-insensitive)
 	columnMap := make(map[string]string)
 	for _, col := range columns {
 		columnMap[strings.ToLower(col)] = col
 	}
 
-	// Priority list of column names to order by (descending)
-	orderPriority := []string{
+	timePriority := []string{
 		"updated_at",
 		"update_time",
 		"updated_time",
@@ -38,22 +43,24 @@ func buildSmartOrderBy(columns []string) string {
 		"create_time",
 		"created_time",
 		"createtime",
-		"id",
 	}
-
-	var orderFields []string
-	for _, field := range orderPriority {
+	for _, field := range timePriority {
 		if actualCol, exists := columnMap[field]; exists {
-			orderFields = append(orderFields, actualCol+" DESC")
-			// Only use the first matching field
-			break
+			return actualCol + " DESC"
 		}
 	}
 
-	if len(orderFields) == 0 {
-		return ""
+	// Auto-increment columns rank above a plain "id" column.
+	for _, col := range autoIncrementColumns {
+		if col != "" {
+			return col + " DESC"
+		}
 	}
-	return strings.Join(orderFields, ", ")
+
+	if actualCol, exists := columnMap["id"]; exists {
+		return actualCol + " DESC"
+	}
+	return ""
 }
 
 // dbAdapter defines the interface for different database types
@@ -67,11 +74,15 @@ type dbAdapter interface {
 	// GetTableColumns returns list of column names for a table
 	GetTableColumns(db *sql.DB, dbName, tableName string) ([]string, error)
 
+	// GetAutoIncrementColumns returns the names of auto-increment columns in a table.
+	GetAutoIncrementColumns(db *sql.DB, dbName, tableName string) ([]string, error)
+
 	// BuildTableDataQuery builds a query to fetch table data
 	BuildTableDataQuery(dbName, tableName string, limit int) string
 
-	// BuildTableDataQueryWithOrder builds a query with smart ordering based on available columns
-	BuildTableDataQueryWithOrder(dbName, tableName string, columns []string, limit int) string
+	// BuildTableDataQueryWithOrder builds a query with smart ordering based on
+	// available columns. autoIncrementColumns ranks above a plain "id" column.
+	BuildTableDataQueryWithOrder(dbName, tableName string, columns []string, autoIncrementColumns []string, limit int) string
 
 	// SupportMultiDatabase returns true if this database type supports multi-database mode
 	SupportMultiDatabase() bool
@@ -192,12 +203,41 @@ func (p *postgresAdapter) BuildTableDataQuery(dbName, tableName string, limit in
 	return fmt.Sprintf("SELECT * FROM %s LIMIT %d", tableName, limit)
 }
 
-func (p *postgresAdapter) BuildTableDataQueryWithOrder(dbName, tableName string, columns []string, limit int) string {
-	orderBy := buildSmartOrderBy(columns)
+func (p *postgresAdapter) BuildTableDataQueryWithOrder(dbName, tableName string, columns []string, autoIncrementColumns []string, limit int) string {
+	orderBy := buildSmartOrderBy(columns, autoIncrementColumns)
 	if orderBy == "" {
 		return fmt.Sprintf("SELECT * FROM %s LIMIT %d", tableName, limit)
 	}
 	return fmt.Sprintf("SELECT * FROM %s ORDER BY %s LIMIT %d", tableName, orderBy, limit)
+}
+
+// GetAutoIncrementColumns returns columns whose default is a sequence
+// (SERIAL / BIGSERIAL / SMALLSERIAL — i.e. default starts with nextval(),
+// or identity columns created via GENERATED ... AS IDENTITY).
+func (p *postgresAdapter) GetAutoIncrementColumns(db *sql.DB, dbName, tableName string) ([]string, error) {
+	query := `
+		SELECT column_name
+		FROM information_schema.columns
+		WHERE table_schema = 'public'
+		  AND table_name = $1
+		  AND (column_default LIKE 'nextval(%' OR is_identity = 'YES')
+		ORDER BY ordinal_position
+	`
+	rows, err := db.Query(query, tableName)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var cols []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		cols = append(cols, name)
+	}
+	return cols, rows.Err()
 }
 
 func (p *postgresAdapter) SupportMultiDatabase() bool {
@@ -510,8 +550,8 @@ func (m *mysqlAdapter) BuildTableDataQuery(dbName, tableName string, limit int) 
 	return fmt.Sprintf("SELECT * FROM %s LIMIT %d", tableName, limit)
 }
 
-func (m *mysqlAdapter) BuildTableDataQueryWithOrder(dbName, tableName string, columns []string, limit int) string {
-	orderBy := buildSmartOrderBy(columns)
+func (m *mysqlAdapter) BuildTableDataQueryWithOrder(dbName, tableName string, columns []string, autoIncrementColumns []string, limit int) string {
+	orderBy := buildSmartOrderBy(columns, autoIncrementColumns)
 	if orderBy == "" {
 		return m.BuildTableDataQuery(dbName, tableName, limit)
 	}
@@ -519,6 +559,34 @@ func (m *mysqlAdapter) BuildTableDataQueryWithOrder(dbName, tableName string, co
 		return fmt.Sprintf("SELECT * FROM %s.%s ORDER BY %s LIMIT %d", dbName, tableName, orderBy, limit)
 	}
 	return fmt.Sprintf("SELECT * FROM %s ORDER BY %s LIMIT %d", tableName, orderBy, limit)
+}
+
+// GetAutoIncrementColumns returns columns marked AUTO_INCREMENT in MySQL's
+// information_schema.columns.extra.
+func (m *mysqlAdapter) GetAutoIncrementColumns(db *sql.DB, dbName, tableName string) ([]string, error) {
+	query := `
+		SELECT column_name
+		FROM information_schema.columns
+		WHERE table_schema = COALESCE(NULLIF(?, ''), DATABASE())
+		  AND table_name = ?
+		  AND extra LIKE '%auto_increment%'
+		ORDER BY ordinal_position
+	`
+	rows, err := db.Query(query, dbName, tableName)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var cols []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		cols = append(cols, name)
+	}
+	return cols, rows.Err()
 }
 
 func (m *mysqlAdapter) SupportMultiDatabase() bool {
@@ -708,12 +776,39 @@ func (s *sqliteAdapter) BuildTableDataQuery(dbName, tableName string, limit int)
 	return fmt.Sprintf("SELECT * FROM %s LIMIT %d", tableName, limit)
 }
 
-func (s *sqliteAdapter) BuildTableDataQueryWithOrder(dbName, tableName string, columns []string, limit int) string {
-	orderBy := buildSmartOrderBy(columns)
+func (s *sqliteAdapter) BuildTableDataQueryWithOrder(dbName, tableName string, columns []string, autoIncrementColumns []string, limit int) string {
+	orderBy := buildSmartOrderBy(columns, autoIncrementColumns)
 	if orderBy == "" {
 		return fmt.Sprintf("SELECT * FROM %s LIMIT %d", tableName, limit)
 	}
 	return fmt.Sprintf("SELECT * FROM %s ORDER BY %s LIMIT %d", tableName, orderBy, limit)
+}
+
+// GetAutoIncrementColumns returns auto-increment columns in a SQLite table.
+// In SQLite, a column declared as INTEGER PRIMARY KEY is an alias for ROWID
+// and auto-increments; this covers the common case without parsing the
+// CREATE TABLE statement for the explicit AUTOINCREMENT keyword.
+func (s *sqliteAdapter) GetAutoIncrementColumns(db *sql.DB, dbName, tableName string) ([]string, error) {
+	query := fmt.Sprintf("PRAGMA table_info('%s')", strings.ReplaceAll(tableName, "'", "''"))
+	rows, err := db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var cols []string
+	for rows.Next() {
+		var cid, notnull, pk int
+		var name, typ string
+		var dfltValue sql.NullString
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &dfltValue, &pk); err != nil {
+			return nil, err
+		}
+		if pk == 1 && strings.EqualFold(strings.TrimSpace(typ), "INTEGER") {
+			cols = append(cols, name)
+		}
+	}
+	return cols, rows.Err()
 }
 
 func (s *sqliteAdapter) SupportMultiDatabase() bool {
@@ -919,6 +1014,16 @@ func (ta *TestAdapter) GetTables(db *sql.DB, dbName string) ([]string, error) {
 // GetTableColumns returns list of column names for a table
 func (ta *TestAdapter) GetTableColumns(db *sql.DB, dbName, tableName string) ([]string, error) {
 	return ta.adapter.GetTableColumns(db, dbName, tableName)
+}
+
+// GetAutoIncrementColumns returns the auto-increment columns in a table
+func (ta *TestAdapter) GetAutoIncrementColumns(db *sql.DB, dbName, tableName string) ([]string, error) {
+	return ta.adapter.GetAutoIncrementColumns(db, dbName, tableName)
+}
+
+// BuildTableDataQueryWithOrder builds a query with smart ordering
+func (ta *TestAdapter) BuildTableDataQueryWithOrder(dbName, tableName string, columns []string, autoIncrementColumns []string, limit int) string {
+	return ta.adapter.BuildTableDataQueryWithOrder(dbName, tableName, columns, autoIncrementColumns, limit)
 }
 
 // GetTableSchema returns detailed schema information for a table
