@@ -1,6 +1,7 @@
 package sqlview
 
 import (
+	"context"
 	"database/sql"
 	"embed"
 	"encoding/base64"
@@ -11,6 +12,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 )
 
 //go:embed index.html
@@ -367,12 +369,18 @@ func (dv *DBViewer) handleTableData(w http.ResponseWriter, r *http.Request) {
 		defer closeFunc()
 	}
 
+	// 30s timeout shared by both the fallback and the main path below — same
+	// rationale as handleQuery: bound user-triggered query time so SQLite
+	// can't be held indefinitely.
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
 	// Get table columns for smart ordering
 	columns, err := dv.adapter.GetTableColumns(db, dbOrSchema, tableName)
 	if err != nil {
 		// If we can't get columns, fall back to simple query without ordering
 		query := dv.adapter.BuildTableDataQuery(dbOrSchema, tableName, limit)
-		result, err := executeQueryOnDB(db, query)
+		result, err := executeQueryOnDB(ctx, db, query)
 		if err != nil {
 			respondError(w, fmt.Sprintf("Failed to query table: %v", err), http.StatusInternalServerError)
 			return
@@ -389,7 +397,7 @@ func (dv *DBViewer) handleTableData(w http.ResponseWriter, r *http.Request) {
 	query := dv.adapter.BuildTableDataQueryWithOrder(dbOrSchema, tableName, columns, autoIncCols, limit)
 
 	// Execute query using the selected DB connection
-	result, err := executeQueryOnDB(db, query)
+	result, err := executeQueryOnDB(ctx, db, query)
 	if err != nil {
 		respondError(w, fmt.Sprintf("Failed to query table: %v", err), http.StatusInternalServerError)
 		return
@@ -426,7 +434,14 @@ func (dv *DBViewer) handleQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := dv.executeQuery(req.SQL)
+	// Bound query execution time. SQLite has no statement_timeout — without
+	// this a long-running SELECT (e.g., a self-JOIN on a large table) holds
+	// the single-connection DB for hours and stalls every other read/write.
+	// 30s is generous for legitimate analytics queries while preventing
+	// accidental DoS via expensive ad-hoc SQL.
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	result, err := dv.executeQuery(ctx, req.SQL)
 	if err != nil {
 		respondError(w, fmt.Sprintf("Query failed: %v", err), http.StatusBadRequest)
 		return
@@ -627,14 +642,23 @@ type ColumnType struct {
 	DefaultEncoding string `json:"defaultEncoding"` // Default encoding: "hex", "base64", or "raw"
 }
 
-// executeQuery executes a SQL query and returns the result (uses default DB)
-func (dv *DBViewer) executeQuery(query string) (*QueryResult, error) {
-	return executeQueryOnDB(dv.db, query)
+// executeQuery executes a SQL query and returns the result (uses default DB).
+// Callers must pass a context with timeout — see executeQueryOnDB.
+func (dv *DBViewer) executeQuery(ctx context.Context, query string) (*QueryResult, error) {
+	return executeQueryOnDB(ctx, dv.db, query)
 }
 
-// executeQueryOnDB executes a SQL query on a specific DB connection
-func executeQueryOnDB(db *sql.DB, query string) (*QueryResult, error) {
-	rows, err := db.Query(query)
+// executeQueryOnDB executes a SQL query on a specific DB connection.
+//
+// ctx is required: callers must pass a context with timeout (typically derived
+// from http.Request.Context with WithTimeout) so that runaway queries can be
+// cancelled. SQLite has no native statement_timeout — cancellation is
+// triggered by ctx.Done() invoking the driver's interrupt callback. Without
+// this, a self-JOIN on a large table can hold a single-connection SQLite DB
+// for hours and stall the entire server (every other read/write queues
+// behind the same connection).
+func executeQueryOnDB(ctx context.Context, db *sql.DB, query string) (*QueryResult, error) {
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}
