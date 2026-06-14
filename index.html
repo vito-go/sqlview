@@ -2323,12 +2323,13 @@
             executeBtn.innerHTML = '<div class="loading"></div><span>Executing...</span>';
 
             try {
+                const dbOrSchema = document.getElementById('databaseSelect').value;
                 const response = await fetch(`${apiBase}/query`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify({ sql: query })
+                    body: JSON.stringify({ sql: query, database: dbOrSchema })
                 });
 
                 const data = await response.json();
@@ -3652,7 +3653,7 @@
                     headers: {
                         'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify({ sql: sql })
+                    body: JSON.stringify({ sql: sql, database: dbOrSchema })
                 });
 
                 const data = await response.json();
@@ -4076,15 +4077,32 @@
             };
         }
 
-        // Reload schema tables when database changes
+        // Reload every tab's table list when the selected database changes,
+        // regardless of which tab is currently active — otherwise switching
+        // to Schema Explorer or Charts afterwards shows tables from the
+        // previously selected database.
         const originalLoadTables = loadTables;
         loadTables = async function() {
             await originalLoadTables();
-            // Also reload schema explorer tables if on that tab
-            const schemaTab = document.getElementById('tab-schema');
-            if (schemaTab && schemaTab.classList.contains('active')) {
-                await loadSchemaTables();
+
+            // Schema Explorer: refresh its table list and clear any
+            // previously selected table, since it belonged to the old database.
+            selectedSchemaTable = null;
+            const schemaContent = document.getElementById('schemaContent');
+            if (schemaContent) {
+                schemaContent.innerHTML = `
+                    <div class="schema-content-empty">
+                        <div class="schema-content-empty-icon">📋</div>
+                        <div style="font-size: 16px; margin-bottom: 8px;">No table selected</div>
+                        <div style="font-size: 13px; color: #bbb;">Select a table from the list to view its schema</div>
+                    </div>`;
             }
+            await loadSchemaTables();
+
+            // Charts: refresh the table dropdown and clear dependent
+            // column/axis selections, since they belonged to the old database.
+            await initChartTables();
+            if (typeof loadChartColumns === 'function') loadChartColumns();
         };
 
         // Toggle main sidebar collapse

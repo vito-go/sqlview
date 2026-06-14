@@ -414,7 +414,8 @@ func (dv *DBViewer) handleQuery(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		SQL string `json:"sql"`
+		SQL      string `json:"sql"`
+		Database string `json:"database"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -434,6 +435,27 @@ func (dv *DBViewer) handleQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	dbOrSchema := req.Database
+	if dbOrSchema == "" {
+		dbOrSchema = "public"
+	}
+	if !isValidTableName(dbOrSchema) {
+		respondError(w, "invalid database/schema name", http.StatusBadRequest)
+		return
+	}
+
+	// Get DB connection for the selected database, matching the other
+	// data-reading handlers (handleTableData, handleTableSchema, ...) instead
+	// of always falling back to the default connection.
+	db, closeFunc, err := dv.getDB(dbOrSchema)
+	if err != nil {
+		respondError(w, fmt.Sprintf("Failed to connect to database: %v", err), http.StatusInternalServerError)
+		return
+	}
+	if closeFunc != nil {
+		defer closeFunc()
+	}
+
 	// Bound query execution time. SQLite has no statement_timeout — without
 	// this a long-running SELECT (e.g., a self-JOIN on a large table) holds
 	// the single-connection DB for hours and stalls every other read/write.
@@ -441,7 +463,7 @@ func (dv *DBViewer) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// accidental DoS via expensive ad-hoc SQL.
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
-	result, err := dv.executeQuery(ctx, req.SQL)
+	result, err := executeQueryOnDB(ctx, db, req.SQL)
 	if err != nil {
 		respondError(w, fmt.Sprintf("Query failed: %v", err), http.StatusBadRequest)
 		return
@@ -640,12 +662,6 @@ type ColumnType struct {
 	Type            string `json:"type"`            // Database type (e.g., "bytea", "blob")
 	IsBinary        bool   `json:"isBinary"`        // Whether this column is binary type
 	DefaultEncoding string `json:"defaultEncoding"` // Default encoding: "hex", "base64", or "raw"
-}
-
-// executeQuery executes a SQL query and returns the result (uses default DB).
-// Callers must pass a context with timeout — see executeQueryOnDB.
-func (dv *DBViewer) executeQuery(ctx context.Context, query string) (*QueryResult, error) {
-	return executeQueryOnDB(ctx, dv.db, query)
 }
 
 // executeQueryOnDB executes a SQL query on a specific DB connection.
