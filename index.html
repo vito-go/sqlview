@@ -2104,25 +2104,35 @@
             initChartWhereBindings();
         }
 
-        // Initialize CodeMirror for SQL syntax highlighting
+        // Initialize CodeMirror for SQL syntax highlighting.
+        // CodeMirror loads from a CDN — if that's blocked (offline, corporate
+        // proxy, ad-blocker), `CodeMirror` is undefined and this throws. Fall
+        // back to the plain #sqlQuery textarea (already supported everywhere
+        // sqlEditor is used) instead of letting the error abort init() and
+        // take down the rest of the app with it.
         function initCodeMirror() {
-            const textarea = document.getElementById('sqlQuery');
-            const isDarkMode = document.body.classList.contains('dark-mode');
+            try {
+                const textarea = document.getElementById('sqlQuery');
+                const isDarkMode = document.body.classList.contains('dark-mode');
 
-            sqlEditor = CodeMirror.fromTextArea(textarea, {
-                mode: 'text/x-sql',
-                theme: isDarkMode ? 'dracula' : 'eclipse',
-                lineNumbers: true,
-                lineWrapping: true,
-                autofocus: false,
-                tabSize: 2,
-                indentWithTabs: false,
-                extraKeys: {
-                    'Ctrl-Enter': executeQuery,
-                    'Cmd-Enter': executeQuery
-                }
-            });
-            sqlEditor.setSize(null, 120);
+                sqlEditor = CodeMirror.fromTextArea(textarea, {
+                    mode: 'text/x-sql',
+                    theme: isDarkMode ? 'dracula' : 'eclipse',
+                    lineNumbers: true,
+                    lineWrapping: true,
+                    autofocus: false,
+                    tabSize: 2,
+                    indentWithTabs: false,
+                    extraKeys: {
+                        'Ctrl-Enter': executeQuery,
+                        'Cmd-Enter': executeQuery
+                    }
+                });
+                sqlEditor.setSize(null, 120);
+            } catch (error) {
+                console.warn('CodeMirror unavailable, falling back to plain textarea:', error);
+                sqlEditor = null;
+            }
         }
 
         // Load connection info
