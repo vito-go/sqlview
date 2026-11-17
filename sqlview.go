@@ -172,6 +172,8 @@ func (dv *DBViewer) Mount(mux interface {
 	// API routes - apply preHandles to all routes
 	handleFunc(mux, http.MethodGet+" "+dv.basePath+"/api/connection-info", dv.handleConnectionInfo, preHandles...)
 	handleFunc(mux, http.MethodGet+" "+dv.basePath+"/api/databases", dv.handleDatabases, preHandles...)
+	handleFunc(mux, http.MethodGet+" "+dv.basePath+"/api/schemas", dv.handleSchemas, preHandles...)
+	handleFunc(mux, http.MethodGet+" "+dv.basePath+"/api/database-size", dv.handleDatabaseSize, preHandles...)
 	handleFunc(mux, http.MethodGet+" "+dv.basePath+"/api/tables", dv.handleTables, preHandles...)
 	handleFunc(mux, http.MethodGet+" "+dv.basePath+"/api/table-data", dv.handleTableData, preHandles...)
 	handleFunc(mux, http.MethodPost+" "+dv.basePath+"/api/query", dv.handleQuery, preHandles...)
@@ -289,6 +291,95 @@ func (dv *DBViewer) handleDatabases(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, databases)
 }
 
+// handleDatabaseSize returns the on-disk size of the selected database.
+func (dv *DBViewer) handleDatabaseSize(w http.ResponseWriter, r *http.Request) {
+	dbOrSchema := r.URL.Query().Get("database")
+	if dbOrSchema == "" {
+		dbOrSchema = "public"
+	}
+	if !isValidTableName(dbOrSchema) {
+		respondError(w, "invalid database name", http.StatusBadRequest)
+		return
+	}
+
+	db, closeFunc, err := dv.getDB(dbOrSchema)
+	if err != nil {
+		respondError(w, fmt.Sprintf("Failed to connect to database: %v", err), http.StatusInternalServerError)
+		return
+	}
+	if closeFunc != nil {
+		defer closeFunc()
+	}
+
+	size, err := dv.adapter.GetDatabaseSize(db, dbOrSchema)
+	if err != nil {
+		respondError(w, fmt.Sprintf("Failed to get database size: %v", err), http.StatusInternalServerError)
+		return
+	}
+	respondJSON(w, map[string]int64{"bytes": size})
+}
+
+// handleSchemas returns the schemas of the selected database. Only
+// schema-aware databases (PostgreSQL) have any; others return an empty list.
+func (dv *DBViewer) handleSchemas(w http.ResponseWriter, r *http.Request) {
+	sa, ok := dv.adapter.(schemaAdapter)
+	if !ok {
+		respondJSON(w, []string{})
+		return
+	}
+
+	dbOrSchema := r.URL.Query().Get("database")
+	if dbOrSchema == "" {
+		dbOrSchema = "public"
+	}
+	if !isValidTableName(dbOrSchema) {
+		respondError(w, "invalid database name", http.StatusBadRequest)
+		return
+	}
+
+	db, closeFunc, err := dv.getDB(dbOrSchema)
+	if err != nil {
+		respondError(w, fmt.Sprintf("Failed to connect to database: %v", err), http.StatusInternalServerError)
+		return
+	}
+	if closeFunc != nil {
+		defer closeFunc()
+	}
+
+	schemas, err := sa.GetSchemas(db)
+	if err != nil {
+		respondError(w, fmt.Sprintf("Failed to query schemas: %v", err), http.StatusInternalServerError)
+		return
+	}
+	if schemas == nil {
+		schemas = []string{}
+	}
+	respondJSON(w, schemas)
+}
+
+// qualifyTable applies the optional `schema` query parameter to a table name.
+// For schema-aware adapters it returns "schema.table"; otherwise the name is
+// returned unchanged. ok is false when the schema name is invalid.
+func (dv *DBViewer) qualifyTable(r *http.Request, tableName string) (string, bool) {
+	schema := r.URL.Query().Get("schema")
+	if schema == "" {
+		return tableName, true
+	}
+	if !isValidSchemaName(schema) {
+		return "", false
+	}
+	if _, ok := dv.adapter.(schemaAdapter); !ok {
+		return tableName, true
+	}
+	return schema + "." + tableName, true
+}
+
+// isValidSchemaName is isValidTableName without the dot, since a dot would
+// make "schema.table" ambiguous.
+func isValidSchemaName(name string) bool {
+	return isValidTableName(name) && !strings.Contains(name, ".")
+}
+
 // handleTables returns list of tables for a schema or database
 func (dv *DBViewer) handleTables(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -317,8 +408,19 @@ func (dv *DBViewer) handleTables(w http.ResponseWriter, r *http.Request) {
 		defer closeFunc()
 	}
 
-	// Use adapter to get tables
-	tables, err := dv.adapter.GetTables(db, dbOrSchema)
+	// Use adapter to get tables. Schema-aware adapters (PostgreSQL) list the
+	// requested schema; others ignore the parameter.
+	var tables []string
+	schema := r.URL.Query().Get("schema")
+	if sa, ok := dv.adapter.(schemaAdapter); ok && schema != "" {
+		if !isValidSchemaName(schema) {
+			respondError(w, "invalid schema name", http.StatusBadRequest)
+			return
+		}
+		tables, err = sa.GetTablesInSchema(db, schema)
+	} else {
+		tables, err = dv.adapter.GetTables(db, dbOrSchema)
+	}
 	if err != nil {
 		respondError(w, fmt.Sprintf("Failed to query tables: %v", err), http.StatusInternalServerError)
 		return
@@ -356,6 +458,11 @@ func (dv *DBViewer) handleTableData(w http.ResponseWriter, r *http.Request) {
 	// Sanitize names (basic protection)
 	if !isValidTableName(dbOrSchema) || !isValidTableName(tableName) {
 		respondError(w, "invalid database/schema or table name", http.StatusBadRequest)
+		return
+	}
+	tableName, ok := dv.qualifyTable(r, tableName)
+	if !ok {
+		respondError(w, "invalid schema name", http.StatusBadRequest)
 		return
 	}
 
@@ -495,6 +602,11 @@ func (dv *DBViewer) handleTableSchema(w http.ResponseWriter, r *http.Request) {
 		respondError(w, "invalid database/schema or table name", http.StatusBadRequest)
 		return
 	}
+	tableName, ok := dv.qualifyTable(r, tableName)
+	if !ok {
+		respondError(w, "invalid schema name", http.StatusBadRequest)
+		return
+	}
 
 	// Get DB connection
 	db, closeFunc, err := dv.getDB(dbOrSchema)
@@ -537,6 +649,11 @@ func (dv *DBViewer) handleTableIndexes(w http.ResponseWriter, r *http.Request) {
 	// Sanitize names
 	if !isValidTableName(dbOrSchema) || !isValidTableName(tableName) {
 		respondError(w, "invalid database/schema or table name", http.StatusBadRequest)
+		return
+	}
+	tableName, ok := dv.qualifyTable(r, tableName)
+	if !ok {
+		respondError(w, "invalid schema name", http.StatusBadRequest)
 		return
 	}
 
@@ -583,6 +700,11 @@ func (dv *DBViewer) handleTableDDL(w http.ResponseWriter, r *http.Request) {
 		respondError(w, "invalid database/schema or table name", http.StatusBadRequest)
 		return
 	}
+	tableName, ok := dv.qualifyTable(r, tableName)
+	if !ok {
+		respondError(w, "invalid schema name", http.StatusBadRequest)
+		return
+	}
 
 	// Get DB connection
 	db, closeFunc, err := dv.getDB(dbOrSchema)
@@ -625,6 +747,11 @@ func (dv *DBViewer) handleTableStats(w http.ResponseWriter, r *http.Request) {
 	// Sanitize names
 	if !isValidTableName(dbOrSchema) || !isValidTableName(tableName) {
 		respondError(w, "invalid database/schema or table name", http.StatusBadRequest)
+		return
+	}
+	tableName, ok := dv.qualifyTable(r, tableName)
+	if !ok {
+		respondError(w, "invalid schema name", http.StatusBadRequest)
 		return
 	}
 

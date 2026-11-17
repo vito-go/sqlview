@@ -93,6 +93,9 @@ type dbAdapter interface {
 	// GetCurrentDatabase returns the name of the current database
 	GetCurrentDatabase(db *sql.DB) (string, error)
 
+	// GetDatabaseSize returns the on-disk size in bytes of the selected database
+	GetDatabaseSize(db *sql.DB, dbName string) (int64, error)
+
 	// GetTableSchema returns the schema/structure of a table
 	GetTableSchema(db *sql.DB, dbName, tableName string) ([]ColumnInfo, error)
 
@@ -149,15 +152,79 @@ func (p *postgresAdapter) GetDatabases(db *sql.DB) ([]string, error) {
 	return databases, nil
 }
 
+// schemaAdapter is implemented by adapters whose databases contain multiple
+// schemas (PostgreSQL). Handlers pass table names to such adapters qualified
+// as "schema.table"; an unqualified name means the default schema.
+type schemaAdapter interface {
+	// GetSchemas returns the user schemas the current role can use.
+	GetSchemas(db *sql.DB) ([]string, error)
+	// GetTablesInSchema returns the base tables of one schema.
+	GetTablesInSchema(db *sql.DB, schema string) ([]string, error)
+}
+
+const pgDefaultSchema = "public"
+
+// pgSplitTable splits "schema.table" into its parts. Only the first dot
+// separates, so a table whose own name contains a dot stays intact when the
+// handler qualified it. An unqualified name belongs to the default schema.
+func pgSplitTable(name string) (schema, table string) {
+	if i := strings.Index(name, "."); i > 0 {
+		return name[:i], name[i+1:]
+	}
+	return pgDefaultSchema, name
+}
+
+// pgQuoteIdent quotes a PostgreSQL identifier so mixed-case names and
+// schema-qualified names resolve exactly instead of via case folding.
+func pgQuoteIdent(s string) string {
+	return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
+}
+
+// pgQualifiedName returns the quoted "schema"."table" form of a table name.
+func pgQualifiedName(name string) string {
+	schema, table := pgSplitTable(name)
+	return pgQuoteIdent(schema) + "." + pgQuoteIdent(table)
+}
+
+func (p *postgresAdapter) GetSchemas(db *sql.DB) ([]string, error) {
+	query := `
+		SELECT nspname
+		FROM pg_namespace
+		WHERE nspname <> 'information_schema'
+		  AND nspname NOT LIKE 'pg\_%'
+		  AND has_schema_privilege(oid, 'USAGE')
+		ORDER BY nspname
+	`
+	rows, err := db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var schemas []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		schemas = append(schemas, name)
+	}
+	return schemas, rows.Err()
+}
+
 func (p *postgresAdapter) GetTables(db *sql.DB, dbName string) ([]string, error) {
+	return p.GetTablesInSchema(db, pgDefaultSchema)
+}
+
+func (p *postgresAdapter) GetTablesInSchema(db *sql.DB, schema string) ([]string, error) {
 	query := `
 		SELECT table_name
 		FROM information_schema.tables
-		WHERE table_schema = 'public'
+		WHERE table_schema = $1
 		AND table_type = 'BASE TABLE'
 		ORDER BY table_name
 	`
-	rows, err := db.Query(query)
+	rows, err := db.Query(query, schema)
 	if err != nil {
 		return nil, err
 	}
@@ -178,11 +245,12 @@ func (p *postgresAdapter) GetTableColumns(db *sql.DB, dbName, tableName string) 
 	query := `
 		SELECT column_name
 		FROM information_schema.columns
-		WHERE table_schema = 'public'
-		AND table_name = $1
+		WHERE table_schema = $1
+		AND table_name = $2
 		ORDER BY ordinal_position
 	`
-	rows, err := db.Query(query, tableName)
+	schema, table := pgSplitTable(tableName)
+	rows, err := db.Query(query, schema, table)
 	if err != nil {
 		return nil, err
 	}
@@ -200,15 +268,16 @@ func (p *postgresAdapter) GetTableColumns(db *sql.DB, dbName, tableName string) 
 }
 
 func (p *postgresAdapter) BuildTableDataQuery(dbName, tableName string, limit int) string {
-	return fmt.Sprintf("SELECT * FROM %s LIMIT %d", tableName, limit)
+	return fmt.Sprintf("SELECT * FROM %s LIMIT %d", pgQualifiedName(tableName), limit)
 }
 
 func (p *postgresAdapter) BuildTableDataQueryWithOrder(dbName, tableName string, columns []string, autoIncrementColumns []string, limit int) string {
+	from := pgQualifiedName(tableName)
 	orderBy := buildSmartOrderBy(columns, autoIncrementColumns)
 	if orderBy == "" {
-		return fmt.Sprintf("SELECT * FROM %s LIMIT %d", tableName, limit)
+		return fmt.Sprintf("SELECT * FROM %s LIMIT %d", from, limit)
 	}
-	return fmt.Sprintf("SELECT * FROM %s ORDER BY %s LIMIT %d", tableName, orderBy, limit)
+	return fmt.Sprintf("SELECT * FROM %s ORDER BY %s LIMIT %d", from, orderBy, limit)
 }
 
 // GetAutoIncrementColumns returns columns whose default is a sequence
@@ -218,12 +287,13 @@ func (p *postgresAdapter) GetAutoIncrementColumns(db *sql.DB, dbName, tableName 
 	query := `
 		SELECT column_name
 		FROM information_schema.columns
-		WHERE table_schema = 'public'
-		  AND table_name = $1
+		WHERE table_schema = $1
+		  AND table_name = $2
 		  AND (column_default LIKE 'nextval(%' OR is_identity = 'YES')
 		ORDER BY ordinal_position
 	`
-	rows, err := db.Query(query, tableName)
+	schema, table := pgSplitTable(tableName)
+	rows, err := db.Query(query, schema, table)
 	if err != nil {
 		return nil, err
 	}
@@ -254,14 +324,23 @@ func (p *postgresAdapter) GetCurrentDatabase(db *sql.DB) (string, error) {
 	return dbName, err
 }
 
+// GetDatabaseSize uses the connection's own database: in multi-database mode
+// getDB already connected to the selected one.
+func (p *postgresAdapter) GetDatabaseSize(db *sql.DB, dbName string) (int64, error) {
+	var size int64
+	err := db.QueryRow("SELECT pg_database_size(current_database())").Scan(&size)
+	return size, err
+}
+
 func (p *postgresAdapter) GetTableSchema(db *sql.DB, dbName, tableName string) ([]ColumnInfo, error) {
 	query := `
 		SELECT column_name, data_type, is_nullable, column_default
 		FROM information_schema.columns
-		WHERE table_schema = 'public' AND table_name = $1
+		WHERE table_schema = $1 AND table_name = $2
 		ORDER BY ordinal_position
 	`
-	rows, err := db.Query(query, tableName)
+	schema, table := pgSplitTable(tableName)
+	rows, err := db.Query(query, schema, table)
 	if err != nil {
 		return nil, err
 	}
@@ -292,11 +371,13 @@ func (p *postgresAdapter) GetTableIndexes(db *sql.DB, dbName, tableName string) 
 		JOIN pg_index ix ON t.oid = ix.indrelid
 		JOIN pg_class i ON i.oid = ix.indexrelid
 		JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(ix.indkey)
-		WHERE t.relname = $1
+		JOIN pg_namespace n ON n.oid = t.relnamespace
+		WHERE n.nspname = $1 AND t.relname = $2
 		GROUP BY i.relname, ix.indisprimary, ix.indisunique
 		ORDER BY i.relname
 	`
-	rows, err := db.Query(query, tableName)
+	schema, table := pgSplitTable(tableName)
+	rows, err := db.Query(query, schema, table)
 	if err != nil {
 		return nil, err
 	}
@@ -329,17 +410,25 @@ func (p *postgresAdapter) GetTableDDL(db *sql.DB, dbName, tableName string) (str
 			is_nullable,
 			column_default
 		FROM information_schema.columns
-		WHERE table_schema = 'public' AND table_name = $1
+		WHERE table_schema = $1 AND table_name = $2
 		ORDER BY ordinal_position
 	`
-	rows, err := db.Query(colQuery, tableName)
+	schema, table := pgSplitTable(tableName)
+	rows, err := db.Query(colQuery, schema, table)
 	if err != nil {
 		return "", err
 	}
 	defer func() { _ = rows.Close() }()
 
+	// Keep the familiar bare name for the default schema; qualify otherwise
+	// so the DDL recreates the table in the right schema.
+	ddlName := table
+	if schema != pgDefaultSchema {
+		ddlName = pgQualifiedName(tableName)
+	}
+
 	var ddl strings.Builder
-	ddl.WriteString(fmt.Sprintf("CREATE TABLE %s (\n", tableName))
+	ddl.WriteString(fmt.Sprintf("CREATE TABLE %s (\n", ddlName))
 
 	var colDefs []string
 	for rows.Next() {
@@ -395,11 +484,12 @@ func (p *postgresAdapter) GetTableDDL(db *sql.DB, dbName, tableName string) (str
 		JOIN pg_index ix ON t.oid = ix.indrelid
 		JOIN pg_class i ON i.oid = ix.indexrelid
 		JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(ix.indkey)
-		WHERE t.relname = $1 AND NOT ix.indisprimary
+		JOIN pg_namespace n ON n.oid = t.relnamespace
+		WHERE n.nspname = $1 AND t.relname = $2 AND NOT ix.indisprimary
 		GROUP BY i.relname, ix.indisprimary, ix.indisunique
 		ORDER BY i.relname
 	`
-	indexRows, err := db.Query(indexQuery, tableName)
+	indexRows, err := db.Query(indexQuery, schema, table)
 	if err == nil {
 		defer func() { _ = indexRows.Close() }()
 
@@ -420,9 +510,9 @@ func (p *postgresAdapter) GetTableDDL(db *sql.DB, dbName, tableName string) (str
 
 			ddl.WriteString("\n\n")
 			if isUnique {
-				ddl.WriteString(fmt.Sprintf("CREATE UNIQUE INDEX %s ON %s (%s);", indexName, tableName, cols))
+				ddl.WriteString(fmt.Sprintf("CREATE UNIQUE INDEX %s ON %s (%s);", indexName, ddlName, cols))
 			} else {
-				ddl.WriteString(fmt.Sprintf("CREATE INDEX %s ON %s (%s);", indexName, tableName, cols))
+				ddl.WriteString(fmt.Sprintf("CREATE INDEX %s ON %s (%s);", indexName, ddlName, cols))
 			}
 		}
 	}
@@ -433,38 +523,37 @@ func (p *postgresAdapter) GetTableDDL(db *sql.DB, dbName, tableName string) (str
 func (p *postgresAdapter) GetTableStats(db *sql.DB, dbName, tableName string) (map[string]interface{}, error) {
 	stats := make(map[string]interface{})
 
-	// Get row count (estimate from pg_class, fallback to exact count)
+	// Resolve the table by schema + name to its oid, so same-named tables in
+	// other schemas can't leak into the stats.
+	schema, table := pgSplitTable(tableName)
 	var rowCount int64
+	var tableSize, indexSize, totalSize string
 	err := db.QueryRow(`
-		SELECT reltuples::bigint FROM pg_class WHERE relname = $1
-	`, tableName).Scan(&rowCount)
+		SELECT
+			c.reltuples::bigint,
+			pg_size_pretty(pg_table_size(c.oid)),
+			pg_size_pretty(pg_indexes_size(c.oid)),
+			pg_size_pretty(pg_total_relation_size(c.oid))
+		FROM pg_class c
+		JOIN pg_namespace n ON n.oid = c.relnamespace
+		WHERE n.nspname = $1 AND c.relname = $2
+	`, schema, table).Scan(&rowCount, &tableSize, &indexSize, &totalSize)
 	if err != nil {
 		return nil, err
 	}
 
-	// If estimate is invalid (< 0), use exact count
+	// If estimate is invalid (< 0, e.g. never analyzed), use exact count
 	if rowCount < 0 {
-		query := fmt.Sprintf("SELECT COUNT(*) FROM %s", tableName)
+		query := fmt.Sprintf("SELECT COUNT(*) FROM %s", pgQualifiedName(tableName))
 		err = db.QueryRow(query).Scan(&rowCount)
 		if err != nil {
 			return nil, err
 		}
 	}
 	stats["row_count"] = rowCount
-
-	// Get table size
-	var tableSize, indexSize, totalSize string
-	err = db.QueryRow(`
-		SELECT
-			pg_size_pretty(pg_table_size($1)) as table_size,
-			pg_size_pretty(pg_indexes_size($1)) as index_size,
-			pg_size_pretty(pg_total_relation_size($1)) as total_size
-	`, tableName).Scan(&tableSize, &indexSize, &totalSize)
-	if err == nil {
-		stats["table_size"] = tableSize
-		stats["index_size"] = indexSize
-		stats["total_size"] = totalSize
-	}
+	stats["table_size"] = tableSize
+	stats["index_size"] = indexSize
+	stats["total_size"] = totalSize
 
 	return stats, nil
 }
@@ -601,6 +690,18 @@ func (m *mysqlAdapter) GetCurrentDatabase(db *sql.DB) (string, error) {
 	var dbName string
 	err := db.QueryRow("SELECT DATABASE()").Scan(&dbName)
 	return dbName, err
+}
+
+// GetDatabaseSize sums data + index length of every table in the database.
+// information_schema values are InnoDB estimates, like SHOW TABLE STATUS.
+func (m *mysqlAdapter) GetDatabaseSize(db *sql.DB, dbName string) (int64, error) {
+	var size int64
+	err := db.QueryRow(`
+		SELECT CAST(COALESCE(SUM(data_length + index_length), 0) AS SIGNED)
+		FROM information_schema.tables
+		WHERE table_schema = COALESCE(NULLIF(?, ''), DATABASE())
+	`, dbName).Scan(&size)
+	return size, err
 }
 
 func (m *mysqlAdapter) GetTableSchema(db *sql.DB, dbName, tableName string) ([]ColumnInfo, error) {
@@ -822,6 +923,14 @@ func (s *sqliteAdapter) GetDriverName() string {
 func (s *sqliteAdapter) GetCurrentDatabase(db *sql.DB) (string, error) {
 	// SQLite doesn't have a database name concept, use "main"
 	return "main", nil
+}
+
+// GetDatabaseSize returns the size of the main database file (page_count *
+// page_size). A pending WAL file is not included.
+func (s *sqliteAdapter) GetDatabaseSize(db *sql.DB, dbName string) (int64, error) {
+	var size int64
+	err := db.QueryRow("SELECT page_count * page_size FROM pragma_page_count(), pragma_page_size()").Scan(&size)
+	return size, err
 }
 
 func (s *sqliteAdapter) GetTableSchema(db *sql.DB, dbName, tableName string) ([]ColumnInfo, error) {

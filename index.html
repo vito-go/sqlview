@@ -1812,6 +1812,9 @@
                 <select id="databaseSelect">
                     <option>Loading...</option>
                 </select>
+                <!-- PostgreSQL only; hidden for other databases -->
+                <select id="schemaSelect" title="Schema" style="display: none; margin-top: 8px;"></select>
+                <div id="databaseSize" title="On-disk size of the selected database" style="font-size: 12px; color: #999; margin-top: 6px;"></div>
             </div>
             <div class="sidebar-section" style="border-bottom: none; padding-bottom: 8px;">
                 <h3 id="tablesHeading">Tables</h3>
@@ -2098,6 +2101,8 @@
             loadQueryHistory();
             await loadConnectionInfo();
             await loadDatabases();
+            loadDatabaseSize();
+            await loadSchemas();
             await loadTables();
             await initChartTables();
             await initSchemaExplorer();
@@ -2166,10 +2171,126 @@
                     `<option value="${item}">${item}</option>`
                 ).join('');
 
-                select.onchange = loadTables;
+                select.onchange = async () => {
+                    loadDatabaseSize();
+                    await loadSchemas();
+                    await loadTables();
+                };
             } catch (error) {
                 console.error('Failed to load databases/schemas:', error);
             }
+        }
+
+        function formatBytes(bytes) {
+            const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
+            let n = Number(bytes);
+            if (!Number.isFinite(n) || n < 0) return '';
+            let i = 0;
+            while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+            return `${i === 0 ? n : n.toFixed(n < 10 ? 2 : 1)} ${units[i]}`;
+        }
+
+        // Show the selected database's on-disk size under the selector.
+        // Best-effort: a failure (e.g. no privilege) just leaves it blank.
+        async function loadDatabaseSize() {
+            const el = document.getElementById('databaseSize');
+            const db = document.getElementById('databaseSelect').value;
+            el.textContent = '';
+            try {
+                const response = await fetch(`${apiBase}/database-size?database=${encodeURIComponent(db)}`);
+                const data = await response.json();
+                // Ignore a stale response if the user switched databases meanwhile
+                if (document.getElementById('databaseSelect').value !== db) return;
+                if (data && typeof data.bytes === 'number') {
+                    el.textContent = `💾 ${formatBytes(data.bytes)}`;
+                }
+            } catch (error) {
+                console.error('Failed to load database size:', error);
+            }
+        }
+
+        // ---- PostgreSQL schema selection ----
+        const DEFAULT_PG_SCHEMA = 'public';
+
+        function isPostgres() {
+            const d = (dbDriver || '').toLowerCase();
+            return d === 'postgresql' || d === 'postgres' || d === 'pgx';
+        }
+
+        // Selected schema, or '' when the database has no schema concept.
+        function currentSchema() {
+            if (!isPostgres()) return '';
+            return document.getElementById('schemaSelect').value || DEFAULT_PG_SCHEMA;
+        }
+
+        // Extra query-string parameter for API calls that take a table/schema.
+        function schemaQuery() {
+            const s = currentSchema();
+            return s ? `&schema=${encodeURIComponent(s)}` : '';
+        }
+
+        // Quote a PostgreSQL identifier only when it would not survive
+        // unquoted (mixed case, special characters).
+        function pgIdent(name) {
+            return /^[a-z_][a-z0-9_$]*$/.test(name) ? name : `"${name.replace(/"/g, '""')}"`;
+        }
+
+        // Table reference for generated SQL. Non-default schemas are qualified
+        // so the query hits the selected schema regardless of search_path.
+        function qualifiedTableName(table) {
+            if (!isPostgres()) return table;
+            const s = currentSchema();
+            if (s === DEFAULT_PG_SCHEMA) return pgIdent(table);
+            return `${pgIdent(s)}.${pgIdent(table)}`;
+        }
+
+        // Table part of localStorage preference keys. Default-schema tables keep
+        // the old bare key so existing preferences still apply.
+        function prefTableKey(table) {
+            const s = currentSchema();
+            return s && s !== DEFAULT_PG_SCHEMA ? `${s}.${table}` : table;
+        }
+
+        // Load the schema list for the selected database (PostgreSQL only) and
+        // restore the schema last chosen for that database. Falls back to
+        // public, then the first schema, without overwriting the stored choice.
+        async function loadSchemas() {
+            const select = document.getElementById('schemaSelect');
+            if (!isPostgres()) {
+                select.style.display = 'none';
+                select.innerHTML = '';
+                return;
+            }
+
+            const db = document.getElementById('databaseSelect').value;
+            const storageKey = `schema:${db}`;
+            let schemas = [];
+            try {
+                const response = await fetch(`${apiBase}/schemas?database=${encodeURIComponent(db)}`);
+                const data = await response.json();
+                if (Array.isArray(data)) schemas = data;
+            } catch (error) {
+                console.error('Failed to load schemas:', error);
+            }
+            if (schemas.length === 0) schemas = [DEFAULT_PG_SCHEMA];
+
+            let stored = null;
+            try { stored = localStorage.getItem(storageKey); } catch (e) { /* ignore */ }
+            const chosen = schemas.includes(stored)
+                ? stored
+                : (schemas.includes(DEFAULT_PG_SCHEMA) ? DEFAULT_PG_SCHEMA : schemas[0]);
+
+            select.innerHTML = schemas.map(s =>
+                `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`
+            ).join('');
+            select.value = chosen;
+            select.style.display = '';
+
+            select.onchange = async () => {
+                try { localStorage.setItem(storageKey, select.value); } catch (e) { /* ignore */ }
+                selectedTable = null;
+                await loadTables();
+            };
         }
 
         // Load tables
@@ -2184,7 +2305,7 @@
             listDiv.innerHTML = '<div style="text-align: center; color: #999; padding: 20px;">Loading...</div>';
 
             try {
-                const response = await fetch(`${apiBase}/tables?database=${dbOrSchema}`);
+                const response = await fetch(`${apiBase}/tables?database=${dbOrSchema}${schemaQuery()}`);
                 const tables = await response.json();
 
                 // Update tables heading with count
@@ -2284,7 +2405,7 @@
             const dbOrSchema = document.getElementById('databaseSelect').value;
 
             try {
-                const response = await fetch(`${apiBase}/table-data?database=${dbOrSchema}&table=${tableName}&limit=100`);
+                const response = await fetch(`${apiBase}/table-data?database=${dbOrSchema}&table=${tableName}&limit=100${schemaQuery()}`);
                 const data = await response.json();
 
                 if (data.error) {
@@ -2293,7 +2414,7 @@
                 }
 
                 displayResults(data);
-                const queryText = `SELECT * FROM ${tableName} LIMIT 100`;
+                const queryText = `SELECT * FROM ${qualifiedTableName(tableName)} LIMIT 100`;
                 if (sqlEditor) {
                     sqlEditor.setValue(queryText);
                 } else {
@@ -2422,11 +2543,8 @@
         }
 
         function stringToBytes(str) {
-            const bytes = [];
-            for (let i = 0; i < str.length; i++) {
-                bytes.push(str.charCodeAt(i));
-            }
-            return bytes;
+            // UTF-8, symmetric with bytesToString.
+            return Array.from(new TextEncoder().encode(str));
         }
 
         function bytesToHex(bytes) {
@@ -2434,12 +2552,19 @@
         }
 
         function bytesToBase64(bytes) {
-            const binaryString = String.fromCharCode.apply(null, bytes);
+            // Build the binary string in chunks: fromCharCode.apply on a large
+            // array exceeds the engine's argument limit (RangeError: stack size).
+            const CHUNK = 0x8000;
+            let binaryString = '';
+            for (let i = 0; i < bytes.length; i += CHUNK) {
+                binaryString += String.fromCharCode.apply(null, bytes.slice(i, i + CHUNK));
+            }
             return btoa(binaryString);
         }
 
         function bytesToString(bytes) {
-            return String.fromCharCode.apply(null, bytes);
+            // Decode as UTF-8 for display; invalid sequences become U+FFFD.
+            return new TextDecoder('utf-8').decode(new Uint8Array(bytes));
         }
 
         // -------- Integer timestamp detection & formatting --------
@@ -2541,13 +2666,69 @@
             return past ? 'just now' : 'in a moment';
         }
 
+        // ISO 8601 in the viewer's local time zone with its offset,
+        // e.g. 2026-11-16T16:00:00.000+08:00 (toISOString would be UTC).
+        function formatLocalISO(d) {
+            const offsetMin = -d.getTimezoneOffset();
+            const sign = offsetMin >= 0 ? '+' : '-';
+            const abs = Math.abs(offsetMin);
+            return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()) + 'T' +
+                pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds()) + '.' +
+                String(d.getMilliseconds()).padStart(3, '0') +
+                sign + pad2(Math.floor(abs / 60)) + ':' + pad2(abs % 60);
+        }
+
+        // -------- Native date/time columns --------
+        // The server serializes DB time values as RFC 3339 strings
+        // (e.g. 2026-11-16T08:00:00Z). How to display them depends on the type:
+        //  - 'tz'  : timestamptz is an absolute instant -> show in local time.
+        //  - 'wall': timestamp / datetime have no zone; the driver just labels
+        //            the stored wall-clock "Z". Converting would shift it, so
+        //            default to showing it as stored (user can opt into Local).
+        //  - 'date': date only; never convert (would shift the day).
+        function dateTimeKind(type) {
+            const t = String(type || '').toLowerCase().trim();
+            if (t === 'timestamptz' || t === 'timestamp with time zone') return 'tz';
+            if (t === 'timestamp' || t === 'datetime' || t === 'timestamp without time zone') return 'wall';
+            if (t === 'date') return 'date';
+            return null;
+        }
+
+        const RFC3339_RE = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})(\.\d+)?(Z|[+-]\d{2}:\d{2})$/;
+
+        function formatDateTimeValue(raw, kind, format) {
+            if (raw === null || raw === undefined || raw === '') return raw;
+            const s = String(raw);
+            if (format === 'raw') return s;
+            const m = RFC3339_RE.exec(s);
+            if (!m) return s; // not an RFC 3339 value (e.g. SQLite text) - leave untouched
+            const [, datePart, timePart, frac = '', zone] = m;
+            if (kind === 'date') return datePart;
+            if (format === 'local') {
+                // Date only parses up to milliseconds; the sub-second part is
+                // unaffected by whole-minute zone offsets, so re-append it as-is.
+                const d = new Date(`${datePart}T${timePart}${zone}`);
+                if (isNaN(d.getTime())) return s;
+                return formatLocalDateTime(d) + frac;
+            }
+            return `${datePart} ${timePart}${frac}`; // 'stored'
+        }
+
+        function getDateTimeFormatPreference(database, table, column) {
+            try { return localStorage.getItem(`dtformat:${database}:${table}:${column}`); } catch (e) { return null; }
+        }
+
+        function setDateTimeFormatPreference(database, table, column, format) {
+            try { localStorage.setItem(`dtformat:${database}:${table}:${column}`, format); } catch (e) { /* ignore */ }
+        }
+
         function formatTimestamp(raw, unit, format) {
             if (raw === null || raw === undefined || raw === '') return '';
             if (format === 'raw') return String(raw);
             const d = timestampToDate(raw, unit);
             if (!d) return String(raw);
             switch (format) {
-                case 'iso': return d.toISOString();
+                case 'iso': return formatLocalISO(d);
                 case 'relative': return formatRelative(d);
                 case 'time':
                 default: return formatLocalDateTime(d);
@@ -2585,20 +2766,37 @@
                 return;
             }
 
-            // Get current database and table
+            // Get current database and table (schema-qualified when not in the
+            // default schema, so same-named tables don't share preferences)
             const currentDB = document.getElementById('databaseSelect').value || 'public';
-            const currentTable = selectedTable || '';
+            const currentTable = selectedTable ? prefTableKey(selectedTable) : '';
 
             // Initialize column encodings based on stored preferences or defaults
             if (!data.columnEncodings) {
                 data.columnEncodings = {};
             }
 
+            // The server always encodes binary cells with colType.defaultEncoding.
+            // Keep those original values and always convert from them, so the
+            // displayed value matches the selected encoding and switching never
+            // re-encodes an already-encoded string (e.g. base64 of base64).
+            if (!data.columnBinaryOriginals) data.columnBinaryOriginals = {};
             data.columns.forEach((col, idx) => {
                 const colType = data.columnTypes && data.columnTypes[idx];
                 if (colType && colType.isBinary) {
                     const stored = getEncodingPreference(currentDB, currentTable, col);
-                    data.columnEncodings[col] = stored || colType.defaultEncoding;
+                    const encoding = stored || colType.defaultEncoding;
+                    data.columnEncodings[col] = encoding;
+                    if (!data.columnBinaryOriginals[col]) {
+                        data.columnBinaryOriginals[col] = data.rows.map(row => row[idx]);
+                    }
+                    const originals = data.columnBinaryOriginals[col];
+                    data.rows.forEach((row, rowIndex) => {
+                        const original = originals[rowIndex];
+                        if (original !== null && original !== undefined) {
+                            row[idx] = reencodeData(original, colType.defaultEncoding, encoding);
+                        }
+                    });
                 }
             });
 
@@ -2643,6 +2841,32 @@
                 });
             });
 
+            // Native date/time columns: reformat RFC 3339 strings per column
+            // (see dateTimeKind), keeping the server value for reformatting.
+            if (!data.columnDtKinds) data.columnDtKinds = {};
+            if (!data.columnDtFormats) data.columnDtFormats = {};
+            const dtColumnIndex = {};
+            data.columns.forEach((col, idx) => {
+                if (tsColumnIndex[idx] !== undefined) return;
+                const colType = data.columnTypes && data.columnTypes[idx];
+                const kind = dateTimeKind(colType ? colType.type : '');
+                if (!kind) return;
+
+                dtColumnIndex[idx] = col;
+                data.columnDtKinds[col] = kind;
+                const defaultFormat = kind === 'tz' ? 'local' : 'stored';
+                const format = kind === 'date'
+                    ? 'stored'
+                    : (getDateTimeFormatPreference(currentDB, currentTable, col) || defaultFormat);
+                data.columnDtFormats[col] = format;
+
+                const rawCol = data.rows.map(row => row[idx]);
+                data.columnRawValues[col] = rawCol;
+                data.rows.forEach((row, rowIndex) => {
+                    row[idx] = formatDateTimeValue(rawCol[rowIndex], kind, format);
+                });
+            });
+
             // Build table
             let html = '<table><thead><tr>';
             data.columns.forEach((col, idx) => {
@@ -2669,6 +2893,21 @@
                             <option value="time" ${currentFormat === 'time' ? 'selected' : ''}>Time</option>
                             <option value="relative" ${currentFormat === 'relative' ? 'selected' : ''}>Relative</option>
                             <option value="iso" ${currentFormat === 'iso' ? 'selected' : ''}>ISO</option>
+                            <option value="raw" ${currentFormat === 'raw' ? 'selected' : ''}>Raw</option>
+                        </select>
+                    </th>`;
+                } else if (dtColumnIndex[idx] !== undefined && data.columnDtKinds[col] !== 'date') {
+                    const currentFormat = data.columnDtFormats[col];
+                    const isTz = data.columnDtKinds[col] === 'tz';
+                    const hint = isTz
+                        ? 'Absolute instant: Local converts to your time zone'
+                        : 'No time zone stored: As stored shows the DB value; Local treats it as UTC';
+                    html += `<th>
+                        ${escapeHtml(col)}
+                        <br>
+                        <select class="dt-format-selector" title="${escapeHtml(hint)}" data-column="${escapeHtml(col)}" data-col-index="${idx}" style="font-size: 11px; margin-top: 4px; padding: 2px 4px;">
+                            <option value="local" ${currentFormat === 'local' ? 'selected' : ''}>Local</option>
+                            <option value="stored" ${currentFormat === 'stored' ? 'selected' : ''}>As stored</option>
                             <option value="raw" ${currentFormat === 'raw' ? 'selected' : ''}>Raw</option>
                         </select>
                     </th>`;
@@ -2699,17 +2938,17 @@
                     const colIndex = parseInt(this.dataset.colIndex);
                     const newEncoding = this.value;
                     const colType = data.columnTypes[colIndex];
-                    const oldEncoding = data.columnEncodings[column] || colType.defaultEncoding;
+                    const originals = data.columnBinaryOriginals[column] || [];
 
                     // Save preference
                     setEncodingPreference(currentDB, currentTable, column, newEncoding);
                     data.columnEncodings[column] = newEncoding;
 
-                    // Reencode data and update cells
+                    // Reencode from the server's original value and update cells
                     data.rows.forEach((row, rowIndex) => {
-                        const originalValue = row[colIndex];
-                        if (originalValue !== null) {
-                            const reencodedValue = reencodeData(originalValue, oldEncoding, newEncoding);
+                        const originalValue = originals[rowIndex];
+                        if (originalValue !== null && originalValue !== undefined) {
+                            const reencodedValue = reencodeData(originalValue, colType.defaultEncoding, newEncoding);
                             row[colIndex] = reencodedValue;
 
                             // Update cell display
@@ -2740,6 +2979,33 @@
                         const raw = rawCol[rowIndex];
                         if (raw === null || raw === undefined || raw === '') return;
                         const formatted = formatTimestamp(raw, unit, newFormat);
+                        row[colIndex] = formatted;
+                        const cell = container.querySelector(`td[data-row="${rowIndex}"][data-col="${colIndex}"]`);
+                        if (cell) {
+                            cell.textContent = formatted;
+                            cell.title = formatted;
+                        }
+                    });
+                });
+            });
+
+            // Date/time-format change handlers
+            container.querySelectorAll('select.dt-format-selector').forEach(select => {
+                select.addEventListener('change', function(e) {
+                    e.stopPropagation();
+                    const column = this.dataset.column;
+                    const colIndex = parseInt(this.dataset.colIndex);
+                    const newFormat = this.value;
+                    const kind = data.columnDtKinds[column];
+                    const rawCol = data.columnRawValues[column] || [];
+
+                    setDateTimeFormatPreference(currentDB, currentTable, column, newFormat);
+                    data.columnDtFormats[column] = newFormat;
+
+                    data.rows.forEach((row, rowIndex) => {
+                        const raw = rawCol[rowIndex];
+                        if (raw === null || raw === undefined || raw === '') return;
+                        const formatted = formatDateTimeValue(raw, kind, newFormat);
                         row[colIndex] = formatted;
                         const cell = container.querySelector(`td[data-row="${rowIndex}"][data-col="${colIndex}"]`);
                         if (cell) {
@@ -3317,7 +3583,7 @@
         async function initChartTables() {
             try {
                 const dbOrSchema = document.getElementById('databaseSelect').value;
-                const response = await fetch(`${apiBase}/tables?database=${dbOrSchema}`);
+                const response = await fetch(`${apiBase}/tables?database=${dbOrSchema}${schemaQuery()}`);
                 const tables = await response.json();
 
                 const select = document.getElementById('chartTable');
@@ -3347,7 +3613,7 @@
 
             try {
                 const dbOrSchema = document.getElementById('databaseSelect').value;
-                const response = await fetch(`${apiBase}/table-schema?database=${dbOrSchema}&table=${table}`);
+                const response = await fetch(`${apiBase}/table-schema?database=${dbOrSchema}&table=${table}${schemaQuery()}`);
                 const data = await response.json();
 
                 if (data.error) {
@@ -3596,7 +3862,7 @@
             const selectValue = aggregation === 'COUNT'
                 ? 'COUNT(*) as value'
                 : `${aggregation}(${yAxis}) as value`;
-            const sql = `SELECT ${xAxisExpression} as xaxis, ${selectValue} FROM ${table}${whereSQL} GROUP BY xaxis ORDER BY xaxis ASC`;
+            const sql = `SELECT ${xAxisExpression} as xaxis, ${selectValue} FROM ${qualifiedTableName(table)}${whereSQL} GROUP BY xaxis ORDER BY xaxis ASC`;
             return { ok: true, sql, error: '' };
         }
 
@@ -3854,7 +4120,7 @@
         async function loadSchemaTables() {
             try {
                 const dbOrSchema = document.getElementById('databaseSelect').value;
-                const response = await fetch(`${apiBase}/tables?database=${dbOrSchema}`);
+                const response = await fetch(`${apiBase}/tables?database=${dbOrSchema}${schemaQuery()}`);
                 const tables = await response.json();
 
                 const headerEl = document.getElementById('schemaTablesHeader');
@@ -3903,10 +4169,10 @@
 
                 // Load all data in parallel
                 const [schemaRes, indexesRes, statsRes, ddlRes] = await Promise.all([
-                    fetch(`${apiBase}/table-schema?database=${dbOrSchema}&table=${tableName}`),
-                    fetch(`${apiBase}/table-indexes?database=${dbOrSchema}&table=${tableName}`),
-                    fetch(`${apiBase}/table-stats?database=${dbOrSchema}&table=${tableName}`),
-                    fetch(`${apiBase}/table-ddl?database=${dbOrSchema}&table=${tableName}`)
+                    fetch(`${apiBase}/table-schema?database=${dbOrSchema}&table=${tableName}${schemaQuery()}`),
+                    fetch(`${apiBase}/table-indexes?database=${dbOrSchema}&table=${tableName}${schemaQuery()}`),
+                    fetch(`${apiBase}/table-stats?database=${dbOrSchema}&table=${tableName}${schemaQuery()}`),
+                    fetch(`${apiBase}/table-ddl?database=${dbOrSchema}&table=${tableName}${schemaQuery()}`)
                 ]);
 
                 const schema = await schemaRes.json();
